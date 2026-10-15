@@ -6,7 +6,7 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from logging.handlers import SMTPHandler
 from pathlib import Path
 
@@ -44,7 +44,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         entry = {
-            "time": datetime.fromtimestamp(record.created, timezone.utc).isoformat(
+            "time": datetime.fromtimestamp(record.created, UTC).isoformat(
                 timespec="milliseconds"
             ),
             "level": record.levelname,
