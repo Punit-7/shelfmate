@@ -1,0 +1,13 @@
+.env
+.venv/
+data/raw/
+mlruns/
+logs/
+__pycache__/
+
+
+
+
+
+shelfmate-guide.html 
+#Have to remove this file from the repo, but it is needed for the reference guide.
