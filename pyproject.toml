@@ -1,7 +1,7 @@
 [project]
 name = "shelfmate"
 version = "0.1.0"
-description = "Add your description here"
+description = "Book recommender: hybrid collaborative and content-based, with series-aware lanes."
 readme = "README.md"
 authors = [
     { name = "Punit", email = "punit251299@gmail.com" }

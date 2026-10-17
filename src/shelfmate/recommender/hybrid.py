@@ -4,6 +4,8 @@ log = logging.getLogger(__name__)
 
 
 def minmax(scores: dict[int, float]) -> dict[int, float]:
+    if not scores:
+        return {}
     lo, hi = min(scores.values()), max(scores.values())
     return {k: (v - lo) / (hi - lo) if hi > lo else 0.0 for k, v in scores.items()}
 
