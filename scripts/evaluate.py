@@ -179,3 +179,9 @@ if __name__ == "__main__":
     )
     print(f"ALS precision@5 of {als_p:.3f} vs popularity baseline of {pop_p:.3f}")
     print(f"ALS recall@5    of {als_r:.3f} vs popularity baseline of {pop_r:.3f}")
+
+    books = load_series_books()
+    lane_p, lane_r = evaluate_lane_b(model, train_matrix, hidden, books)
+    log_run("lane-b-something-new", lane_p, lane_r)
+    print(f"Lane B precision@5 of {lane_p:.3f} (same-series books removed)")
+    print(f"Lane B recall@5    of {lane_r:.3f} (same-series books removed)")
