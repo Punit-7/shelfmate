@@ -4,10 +4,10 @@ from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
 
 from shelfmate.agent.tools import (
-    recommend_books,
-    find_cheapest_prices,
     find_audiobook,
+    find_cheapest_prices,
     log_finished_book,
+    recommend_books,
 )
 from shelfmate.logging_setup import new_run, setup_logging, timed
 
@@ -15,7 +15,9 @@ log = logging.getLogger(__name__)
 
 SYSTEM = """You are Shelfmate, a book assistant for a reader in India.
 Always use tools for prices. Never guess a price.
-Show prices in rupees with the store name and link."""
+Show prices in rupees with the store name and link.
+When the reader asks what to read, wants suggestions or finishes a book,
+call recommend_books. Never invent book titles; only recommend books it returns."""
 
 llm = ChatOllama(model="qwen2.5:7b", temperature=0)
 agent = create_react_agent(
