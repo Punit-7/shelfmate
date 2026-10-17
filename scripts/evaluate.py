@@ -111,7 +111,7 @@ def evaluate_lane_b(
     for uid, hs in hidden.items():
         started = set(series.reindex(train_matrix[uid].indices).dropna())
 
-        def in_started(b):
+        def in_started(b, started=started):
             name = series.get(b)
             return isinstance(name, str) and name in started
 
