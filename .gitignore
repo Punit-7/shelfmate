@@ -8,3 +8,4 @@ __pycache__/
 .ruff_cache/
 # local reference guide, not part of the repo
 shelfmate-guide.html
+searxng/settings.yml

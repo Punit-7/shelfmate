@@ -10,5 +10,12 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  search:
+    image: searxng/searxng:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng:/etc/searxng
+
 volumes:
   pgdata:
