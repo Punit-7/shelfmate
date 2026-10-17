@@ -1,5 +1,7 @@
+from datetime import datetime
+
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, ForeignKey, Index, String
+from sqlalchemy import BigInteger, ForeignKey, Index, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -50,3 +52,17 @@ class Rating(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     book_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     rating: Mapped[int] = mapped_column(BigInteger)
+
+
+class ShelfEntry(Base):
+    """One of your own books and the shelf it is on."""
+
+    __tablename__ = "my_shelf"
+
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), primary_key=True)
+    shelf: Mapped[str]  # "read", "currently-reading" or "to-read"
+    rating: Mapped[int] = mapped_column(default=0)  # 0 means not rated
+    progress_pct: Mapped[int] = mapped_column(default=0)
+    source: Mapped[str]  # where the entry came from, such as "agent" or "goodreads"
+    added_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    finished_at: Mapped[datetime | None]
