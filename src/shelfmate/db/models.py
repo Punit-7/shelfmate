@@ -27,10 +27,8 @@ class Book(Base):
     ol_work_id: Mapped[str | None]
     description: Mapped[str | None]
     cover_url: Mapped[str | None]
-    series_name: Mapped[
-        str | None
-    ]  # "Red Rising", read from a title like "Golden Son (Red Rising, #2)"
-    series_pos: Mapped[float | None]  # 2.0; novellas such as 2.5 are allowed
+    series_name: Mapped[str | None]
+    series_pos: Mapped[float | None]
     embedding = mapped_column(Vector(384), nullable=True)
 
 

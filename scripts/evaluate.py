@@ -17,6 +17,7 @@ from sqlalchemy import create_engine
 from shelfmate.config import settings
 from shelfmate.logging_setup import new_run, setup_logging, timed
 from shelfmate.recommender.collaborative import train
+from shelfmate.recommender.lanes import parse_series, something_new
 
 log = logging.getLogger("shelfmate.scripts.evaluate")
 
@@ -26,6 +27,9 @@ HIDE_SHARE = 0.2
 K = 5
 PARAMS = {"factors": 64, "regularization": 0.05, "iterations": 20}
 SEED = 42
+LANE_CANDIDATES = (
+    50  # ask the model for more books, because the lane filters remove many
+)
 
 
 def load_liked() -> pd.DataFrame:
@@ -81,6 +85,48 @@ def log_run(name: str, precision: float, recall: float) -> None:
             }
         )
         mlflow.log_metrics({"precision_at_5": precision, "recall_at_5": recall})
+
+
+def load_series_books() -> pd.DataFrame:
+    books = pd.read_csv("data/raw/books.csv").rename(columns={"authors": "author"})
+    parsed = books["title"].map(parse_series)
+    books["series_name"] = [name for name, _ in parsed]
+    books["series_pos"] = [pos for _, pos in parsed]
+    return books.set_index("book_id", drop=False)
+
+
+def evaluate_lane_b(
+    model, train_matrix, hidden: dict, books: pd.DataFrame
+) -> tuple[float, float]:
+    """Precision and recall of the 'something new' lane, with same-series books taken out."""
+    series = books["series_name"]
+    first_book = (
+        books.dropna(subset=["series_name"])
+        .sort_values("series_pos")
+        .groupby("series_name")["book_id"]
+        .first()
+        .to_dict()
+    )
+    precisions, recalls = [], []
+    for uid, hs in hidden.items():
+        started = set(series.reindex(train_matrix[uid].indices).dropna())
+
+        def in_started(b):
+            name = series.get(b)
+            return isinstance(name, str) and name in started
+
+        target = {b for b in hs if not in_started(b)}
+        if not target:
+            continue
+        ids, scores = model.recommend(
+            uid, train_matrix[uid], N=LANE_CANDIDATES, filter_already_liked_items=True
+        )
+        ranked = list(zip(ids.tolist(), scores.tolist()))
+        picks = [b for b, _ in something_new(ranked, books, started, first_book)]
+        hits = len(set(picks) & target)
+        precisions.append(hits / K)
+        recalls.append(hits / len(target))
+    return float(np.mean(precisions)), float(np.mean(recalls))
 
 
 if __name__ == "__main__":
