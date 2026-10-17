@@ -1,6 +1,9 @@
-from ollama import ResponseError
+from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert
 
-from shelfmate.agent.graph import agent
+from shelfmate.agent.graph import ask, tools_called
+from shelfmate.agent.tools import engine
+from shelfmate.db.models import ShelfEntry
 
 CASES = [
     {"ask": "What should I read next?", "tools": ["recommend_books"]},
@@ -66,25 +69,28 @@ CASES = [
 ]
 
 
-def tools_called(result) -> list[str]:
-    return [
-        c["name"]
-        for m in result["messages"]
-        for c in getattr(m, "tool_calls", None) or []
-    ]
-
+# The eval's "I finished ..." cases write to my_shelf, so save the shelf and put it back.
+# ponytail: overwrites anything else written to my_shelf during the run
+with engine.connect() as conn:
+    saved = [dict(r) for r in conn.execute(text("SELECT * FROM my_shelf")).mappings()]
 
 correct = 0
-for case in CASES:
-    try:
-        result = agent.invoke({"messages": [("user", case["ask"])]})
-    except ResponseError as e:  # one bad model reply should not stop the whole run
-        print("ERROR:", case["ask"], "->", str(e).splitlines()[0])
-        continue
-    called = tools_called(result)
-    if all(t in called for t in case["tools"]):
-        correct += 1
-    else:
-        print("MISS:", case["ask"], "->", called)
+try:
+    for case in CASES:
+        try:
+            called = tools_called(ask(case["ask"]))
+        except Exception as e:  # noqa: BLE001 - one failed case should not stop the run
+            print("ERROR:", case["ask"], "->", type(e).__name__, str(e).splitlines()[0])
+            continue
+        # Exact match: a missing tool and an extra tool both count as a miss.
+        if set(called) == set(case["tools"]):
+            correct += 1
+        else:
+            print("MISS:", case["ask"], "->", called)
+finally:
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM my_shelf"))
+        if saved:
+            conn.execute(insert(ShelfEntry), saved)
 
 print(f"Tool accuracy: {correct}/{len(CASES)} = {correct / len(CASES):.0%}")

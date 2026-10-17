@@ -11,9 +11,9 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   search:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.10.17-2a6fc07be
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"  # SearXNG has no login, so keep it off the network
     volumes:
       - ./searxng:/etc/searxng
 

@@ -1,0 +1,7 @@
+# Copy to searxng/settings.yml and set a real secret_key.
+# The agent asks for format=json, so json must be listed here or SearXNG returns 403.
+use_default_settings: true
+search:
+  formats: [html, json]
+server:
+  secret_key: "change-me"

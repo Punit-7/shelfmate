@@ -14,12 +14,18 @@ from shelfmate.logging_setup import new_run, setup_logging, timed
 log = logging.getLogger(__name__)
 
 SYSTEM = """You are Shelfmate, a book assistant for a reader in India.
-Always use tools for prices. Never guess a price.
-Show prices in rupees with the store name and link.
-When the reader asks what to read, wants suggestions or finishes a book,
-call recommend_books. Never invent book titles; only recommend books it returns."""
+Pass book titles to the tools exactly as the reader wrote them.
+- The reader says they finished or read a book: call log_finished_book with its rating.
+- The reader asks what to read next or wants suggestions: call recommend_books.
+- The reader asks about prices, deals or where to buy: call find_cheapest_prices.
+- The reader asks about audiobooks or listening: call find_audiobook.
+A message can need more than one tool; call every tool it needs.
+Only mention books, prices and links that a tool returned. If a tool returns
+nothing, say so. Never invent titles or prices.
+Show prices in rupees with the store name and link."""
 
-llm = ChatOllama(model="qwen2.5:7b", temperature=0)
+# A stalled Ollama server would otherwise block a chat turn forever.
+llm = ChatOllama(model="qwen2.5:7b", temperature=0, client_kwargs={"timeout": 120})
 agent = create_react_agent(
     llm,
     tools=[recommend_books, find_cheapest_prices, find_audiobook, log_finished_book],
@@ -27,23 +33,29 @@ agent = create_react_agent(
 )
 
 
-def ask(question: str) -> dict:
-    new_run("chat")
-    log.info("Question received", extra={"chars": len(question)})
-    log.debug("Question text", extra={"question": question})
-    with timed(log, "agent answer"):
-        result = agent.invoke({"messages": [("user", question)]})
-    tools = [
+# Each tool round trip is two steps, so 10 allows about four tool calls per question.
+LIMITS = {"recursion_limit": 10}
+
+
+def tools_called(result: dict) -> list[str]:
+    return [
         c["name"]
         for m in result["messages"]
         for c in getattr(m, "tool_calls", None) or []
     ]
+
+
+def ask(question: str) -> dict:
+    new_run("chat")
+    log.info("Question received", extra={"chars": len(question)})
+    with timed(log, "agent answer"):
+        result = agent.invoke({"messages": [("user", question)]}, LIMITS)
+    tools = tools_called(result)
     log.info(
         "Answered using %d tool call(s)",
         len(tools),
         extra={"tools": tools, "steps": len(result["messages"])},
     )
-    log.debug("Answer text", extra={"answer": result["messages"][-1].content})
     return result
 
 
