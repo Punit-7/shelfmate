@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from shelfmate.agent.search import format_of, is_this_book, on_store, selling_price
+from shelfmate.agent.search import (
+    format_of,
+    is_this_book,
+    on_store,
+    selling_price,
+    store_links,
+)
 from shelfmate.api.main import ProgressRequest
 
 
@@ -50,3 +56,15 @@ def test_progress_chapter_must_fit_the_book():
         ProgressRequest(chapter=41, total_chapters=40)
     with pytest.raises(ValidationError):
         ProgressRequest(chapter=-1)
+
+
+def test_store_links_leave_out_series_and_second_author():
+    links = store_links(
+        "Golden Son (Red Rising, #2)", "Pierce Brown, Jr.", ["flipkart.com"]
+    )
+    assert links == [
+        {
+            "store": "flipkart.com",
+            "url": "https://www.flipkart.com/search?q=Golden+Son+Pierce+Brown",
+        }
+    ]
