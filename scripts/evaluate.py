@@ -34,10 +34,9 @@ LANE_CANDIDATES = (
 
 def load_liked() -> pd.DataFrame:
     engine = create_engine(settings.database_url)
-    ratings = pd.read_sql("SELECT user_id, book_id, rating FROM ratings", engine)
-    # The loader was run twice, so the table has duplicate pairs. Keep one of each.
-    ratings = ratings.drop_duplicates(["user_id", "book_id"])
-    return ratings[ratings["rating"] >= 4]
+    return pd.read_sql(
+        "SELECT user_id, book_id, rating FROM ratings WHERE rating >= 4", engine
+    )
 
 
 def split(liked: pd.DataFrame, rng: np.random.Generator):

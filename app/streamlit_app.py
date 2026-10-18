@@ -3,9 +3,10 @@ import logging
 import httpx
 import streamlit as st
 
+from shelfmate.config import settings
 from shelfmate.logging_setup import setup_logging
 
-API = "http://localhost:8000"
+API = settings.api_url
 COVER = "https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg"
 log = logging.getLogger("shelfmate.web")
 
@@ -19,17 +20,18 @@ def start_logging() -> bool:
 start_logging()
 
 
-def api_get(path: str, **params):
-    """Calls the API. On failure, logs the error and shows a clear message on the page."""
+def call_api(method: str, path: str, **kwargs):
+    """Calls the API. On failure, logs the error, shows a clear message and returns None."""
     try:
-        r = httpx.get(f"{API}{path}", params=params, timeout=10)
+        r = httpx.request(method, f"{API}{path}", timeout=30, **kwargs)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:
         rid = e.response.headers.get("X-Request-ID", "-")
         log.error(
-            "API returned %d for %s",
+            "API returned %d for %s %s",
             e.response.status_code,
+            method,
             path,
             extra={
                 "api_path": path,
@@ -37,42 +39,142 @@ def api_get(path: str, **params):
                 "request_id": rid,
             },
         )
-        st.error(f"The API returned an error. Request ID: {rid}")
+        try:
+            detail = e.response.json().get("detail", "")
+        except ValueError:  # a crash returns plain text, not JSON
+            detail = ""
+        st.error(f"The API returned an error. {detail} (Request ID: {rid})")
     except httpx.RequestError as e:
         log.error("API not reachable", extra={"api_path": path, "error": str(e)})
         st.error("The API is not running. Start it with uvicorn and refresh this page.")
-    return []
+    return None
+
+
+def done(message: str) -> None:
+    """Shows the message after the page reloads with the new data."""
+    st.session_state["flash"] = message
+    st.rerun()
+
+
+def cover(book: dict, width: int) -> None:
+    if book.get("isbn13"):
+        st.image(COVER.format(isbn=book["isbn13"]), width=width)
+
+
+def grid(books: list[dict], actions) -> None:
+    """Four books per row: cover, title and author, then whatever `actions` adds."""
+    if not books:
+        st.caption("No books on this shelf yet.")
+    cols = st.columns(4)
+    for i, book in enumerate(books):
+        with cols[i % 4]:
+            cover(book, 160)
+            st.markdown(f"**{book['title']}**  \n{book['author']}")
+            actions(book)
+
+
+def reading_actions(book: dict) -> None:
+    key = book["book_id"]
+    progress = st.slider("Progress %", 0, 100, book["progress_pct"], key=f"p{key}")
+    if progress != book["progress_pct"]:
+        call_api("PATCH", f"/shelf/{key}/progress", json={"progress_pct": progress})
+    rating = st.select_slider("Rating", options=[1, 2, 3, 4, 5], value=4, key=f"r{key}")
+    if st.button("Finished", key=f"f{key}"):
+        result = call_api("POST", f"/shelf/{key}/finish", json={"rating": rating})
+        log.info("Finished clicked", extra={"book_id": key, "rating": rating})
+        if result:
+            done("Saved. Your new recommendations are on the way.")
+
+
+def read_actions(book: dict) -> None:
+    st.caption("★" * book["rating"] if book["rating"] else "Not rated")
+
+
+def want_actions(book: dict) -> None:
+    if st.button("Start reading", key=f"s{book['book_id']}") and call_api(
+        "POST", f"/shelf/{book['book_id']}/start"
+    ):
+        done(f"Started {book['title']}.")
 
 
 st.set_page_config(page_title="Shelfmate", page_icon="📚", layout="wide")
 st.title("Shelfmate")
+if message := st.session_state.pop("flash", None):
+    st.success(message)
+
+with st.sidebar:
+    st.header("Add a book")
+    query = st.text_input("Search Open Library")
+    if len(query) >= 2:
+        results = call_api("GET", "/search", params={"q": query}) or []
+        labels = [
+            f"{r['title']} by {r['author']} ({r['year'] or '?'})" for r in results
+        ]
+        pick = st.selectbox("Book", range(len(results)), format_func=labels.__getitem__)
+        shelf = st.radio("Shelf", ["to-read", "currently-reading"], horizontal=True)
+        if (
+            pick is not None
+            and st.button("Add to shelf")
+            and call_api("POST", "/shelf", json={**results[pick], "shelf": shelf})
+        ):
+            done(f"Added {results[pick]['title']}.")
+
+    st.header("Import from Goodreads")
+    export = st.file_uploader("Goodreads library export (CSV)", type="csv")
+    if export and st.button("Import"):
+        result = call_api(
+            "POST",
+            "/import/goodreads",
+            files={"file": (export.name, export.getvalue(), "text/csv")},
+        )
+        if result:
+            st.write(
+                f"Imported {result['imported']}, already on a shelf "
+                f"{result['already_on_shelf']}, not found {len(result['unmatched'])}."
+            )
 
 reading, read, want, recs = st.tabs(
     ["Currently Reading", "Read", "Want to Read", "Recommendations"]
 )
 
 with reading:
-    books = api_get("/shelf", name="currently-reading")
-    cols = st.columns(4)
-    for i, book in enumerate(books):
-        with cols[i % 4]:
-            if book["isbn13"]:
-                st.image(COVER.format(isbn=book["isbn13"]), width=160)
-            st.markdown(f"**{book['title']}**  \n{book['author']}")
-            st.progress(book["progress_pct"] / 100)
-            rating = st.select_slider(
-                "Rating", options=[1, 2, 3, 4, 5], value=4, key=f"r{book['book_id']}"
-            )
-            if st.button("Finished", key=f"f{book['book_id']}"):
-                r = httpx.post(
-                    f"{API}/shelf/{book['book_id']}/finish", json={"rating": rating}
-                )
-                log.info(
-                    "Finished clicked",
-                    extra={
-                        "book_id": book["book_id"],
-                        "rating": rating,
-                        "status": r.status_code,
-                    },
-                )
-                st.success("Saved. Your new recommendations are on the way.")
+    grid(
+        call_api("GET", "/shelf", params={"name": "currently-reading"}) or [],
+        reading_actions,
+    )
+
+with read:
+    grid(call_api("GET", "/shelf", params={"name": "read"}) or [], read_actions)
+
+with want:
+    grid(call_api("GET", "/shelf", params={"name": "to-read"}) or [], want_actions)
+
+with recs:
+    data = call_api("GET", "/recommendations") or {}
+    if not any(data.values()):
+        st.caption("Finish a book to get recommendations.")
+    for lane, label in [("continue", "Continue your series"), ("new", "Something new")]:
+        if not data.get(lane):
+            continue
+        st.subheader(label)
+        for book in data[lane]:
+            left, right = st.columns([1, 4])
+            with left:
+                cover(book, 120)
+            with right:
+                st.markdown(f"**{book['title']}**  \n{book['author']}")
+                if book["summary"]:
+                    st.write(book["summary"])
+                if book["summary_source"] == "llm":
+                    st.caption(
+                        "Summary written by a local AI model from the Open Library description."
+                    )
+                st.caption(book["because"])
+                if book["offers"]:
+                    st.dataframe(
+                        book["offers"],
+                        hide_index=True,
+                        column_config={"url": st.column_config.LinkColumn("Link")},
+                    )
+                else:
+                    st.caption("No prices found yet.")

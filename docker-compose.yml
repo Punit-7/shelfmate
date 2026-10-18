@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: shelfmate
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"  # local only, like SearXNG
     volumes:
       - pgdata:/var/lib/postgresql/data
 

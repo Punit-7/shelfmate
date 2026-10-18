@@ -6,6 +6,9 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:  # placeholders: the settings must load, but the tests never connect
+      DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
+      DB_PASSWORD: ci
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

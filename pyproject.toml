@@ -14,7 +14,6 @@ dependencies = [
     "implicit>=0.7.3",
     "langchain-ollama>=1.1.0",
     "langgraph>=1.2.16",
-    "mlflow>=3.17.1",
     "pandas>=3.0.6",
     "pgvector>=0.5.1",
     "prefect>=3.8.8",
@@ -28,15 +27,13 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
-[project.scripts]
-shelfmate = "shelfmate:main"
-
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "mlflow>=3.17.1",
     "pre-commit>=4.7.0",
     "pytest>=9.1.1",
     "ruff>=0.17.1",

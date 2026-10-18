@@ -98,7 +98,10 @@ def _email_alerts(service: str) -> None:
         fromaddr=settings.email_address,
         toaddrs=[settings.email_address],
         subject=f"[Shelfmate] Error in {service}",
-        credentials=(settings.email_address, settings.email_app_password),
+        credentials=(
+            settings.email_address,
+            settings.email_app_password.get_secret_value(),
+        ),
         secure=(),
     )
     handler.setLevel(logging.ERROR)
@@ -157,7 +160,11 @@ def setup_logging(service: str) -> None:
         }
     )
     sys.excepthook = _log_uncaught
-    if settings.alert_errors_by_email and settings.email_address:
+    if (
+        settings.alert_errors_by_email
+        and settings.email_address
+        and settings.email_app_password
+    ):
         _email_alerts(service)
 
 

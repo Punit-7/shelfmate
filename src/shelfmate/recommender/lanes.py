@@ -4,7 +4,8 @@ from collections import Counter
 
 log = logging.getLogger(__name__)
 
-SERIES = re.compile(r"\((?P<name>.+?),\s*#(?P<pos>[\d.]+)\)\s*$")
+# "(Red Rising, #2)". A book in two series, "(Discworld, #16; Death, #3)", keeps the first.
+SERIES = re.compile(r"\((?P<name>[^()#]+?),\s*#(?P<pos>[\d.]+)(?:[;,][^)]*)?\)\s*$")
 
 
 def parse_series(title: str):
@@ -15,7 +16,10 @@ def parse_series(title: str):
 
 
 def next_in_series(read, books):
-    """read: your Read shelf with series_name, series_pos and rating."""
+    """read: your Read shelf with series_name, series_pos and rating.
+
+    Returns the book id of the next numbered book in each series you rated 3 or more.
+    """
     in_series = read.dropna(subset=["series_name"]).sort_values("series_pos")
     latest = in_series.groupby("series_name").last()
     picks = []
@@ -40,7 +44,7 @@ def next_in_series(read, books):
                 extra={"series": name, "last_pos": float(row["series_pos"])},
             )
             continue
-        picks.append(later.nsmallest(1, "series_pos").iloc[0]["title"])
+        picks.append(int(later.nsmallest(1, "series_pos").index[0]))
     log.info(
         "Continue lane has %d book(s)",
         len(picks),
