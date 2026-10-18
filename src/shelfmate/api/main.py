@@ -5,8 +5,8 @@ import uuid
 from fastapi import BackgroundTasks, FastAPI, Request
 from pydantic import BaseModel, Field
 
-from shelfmate.logging_setup import run_id, setup_logging
 from shelfmate.flows.pipeline import after_finished_book
+from shelfmate.logging_setup import run_id, setup_logging
 
 setup_logging("api")
 log = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class FinishRequest(BaseModel):
 
 @app.post("/shelf/{book_id}/finish")
 def finish_book(book_id: int, req: FinishRequest, background: BackgroundTasks):
-    ...  # move the book to the Read shelf and save the rating
+    # move the book to the Read shelf and save the rating
     log.info("Book finished", extra={"book_id": book_id, "rating": req.rating})
     background.add_task(after_finished_book)
     log.debug("Recommendation flow queued", extra={"book_id": book_id})

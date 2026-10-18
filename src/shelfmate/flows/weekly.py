@@ -11,9 +11,9 @@ log = logging.getLogger(__name__)
 def weekly_refresh():
     new_run("weekly")
     log.info("Weekly refresh started")
-    ...  # 1. refresh prices for every book on Want to Read
-    ...  # 2. search Open Library for new books by authors you rated 4+
-    ...  # 3. email a summary of price drops and new releases
+    # 1. refresh prices for every book on Want to Read
+    # 2. search Open Library for new books by authors you rated 4+
+    # 3. email a summary of price drops and new releases
     log.info("Weekly refresh finished")
 
 
