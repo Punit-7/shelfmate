@@ -61,6 +61,14 @@ def get_editions(work_key: str) -> list[dict]:
     return editions
 
 
+def get_description(work_key: str) -> str | None:
+    """The work's description text, or None if Open Library has none."""
+    desc = _get(f"{work_key}.json", {}).get("description")
+    if isinstance(desc, dict):
+        desc = desc.get("value")
+    return desc or None
+
+
 if __name__ == "__main__":
     setup_logging("loader")
     new_run("openlibrary")

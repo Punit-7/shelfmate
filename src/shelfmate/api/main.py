@@ -4,13 +4,14 @@ import uuid
 from typing import Literal
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from shelfmate.config import settings
+from shelfmate.data.import_goodreads import import_goodreads
 from shelfmate.data.openlibrary import get_editions, search_book
 from shelfmate.db.models import Book, Edition, ShelfEntry
 from shelfmate.flows.pipeline import after_finished_book
@@ -166,3 +167,8 @@ def finish_book(book_id: int, req: FinishRequest, background: BackgroundTasks):
     background.add_task(after_finished_book)
     log.debug("Recommendation flow queued", extra={"book_id": book_id})
     return {"status": "saved", "book_id": book_id, "rating": req.rating}
+
+
+@app.post("/import/goodreads")
+def import_goodreads_export(file: UploadFile):
+    return import_goodreads(file.file, engine)

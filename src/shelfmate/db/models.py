@@ -29,6 +29,9 @@ class Book(Base):
     ol_work_id: Mapped[str | None]
     description: Mapped[str | None]
     cover_url: Mapped[str | None]
+    summary: Mapped[str | None]
+    summary_source: Mapped[str | None]  # "llm", "description" or "none"
+    summary_model: Mapped[str | None]
     series_name: Mapped[str | None]
     series_pos: Mapped[float | None]
     embedding = mapped_column(Vector(384), nullable=True)
