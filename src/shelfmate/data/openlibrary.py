@@ -42,6 +42,10 @@ def get_editions(work_key: str) -> list[dict]:
     editions = []
     for e in entries:
         fmt = (e.get("physical_format") or "").lower()
+        # ponytail: editions with no language recorded are kept, as many English ones have none
+        langs = [lang["key"] for lang in e.get("languages", [])]
+        if langs and "/languages/eng" not in langs:
+            continue
         for isbn in e.get("isbn_13", []):
             if fmt in ("hardcover", "paperback"):
                 editions.append({"isbn13": isbn, "format": fmt})

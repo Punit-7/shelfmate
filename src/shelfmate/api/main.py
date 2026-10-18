@@ -3,12 +3,15 @@ import time
 import uuid
 from typing import Literal
 
+import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from shelfmate.config import settings
+from shelfmate.data.openlibrary import get_editions, search_book
 from shelfmate.db.models import Book, Edition, ShelfEntry
 from shelfmate.flows.pipeline import after_finished_book
 from shelfmate.logging_setup import run_id, setup_logging
@@ -112,16 +115,39 @@ def put_on_shelf(book_id: int, shelf: str, **fields) -> None:
         session.commit()
 
 
+def ensure_editions(book_id: int) -> None:
+    """Fills the editions table from Open Library the first time a book is shelved."""
+    with Session(engine) as session:
+        if session.scalar(
+            select(Edition.id).where(Edition.book_id == book_id).limit(1)
+        ):
+            return
+        book = session.get(Book, book_id)
+        title = book.title.split(" (")[0]  # drop the "(Series, #1)" suffix
+        try:
+            hit = search_book(title, book.author)
+            editions = get_editions(hit["key"]) if hit else []
+        except httpx.HTTPError:
+            log.exception("Open Library lookup failed", extra={"book_id": book_id})
+            return
+        if editions:
+            rows = [{"book_id": book_id, **e} for e in editions]
+            session.execute(insert(Edition).values(rows).on_conflict_do_nothing())
+            session.commit()
+
+
 @app.post("/shelf/{book_id}/start")
-def start_book(book_id: int):
+def start_book(book_id: int, background: BackgroundTasks):
     put_on_shelf(book_id, "currently-reading", finished_at=None)
+    background.add_task(ensure_editions, book_id)
     log.info("Book started", extra={"book_id": book_id})
     return {"status": "saved", "book_id": book_id}
 
 
 @app.post("/shelf/{book_id}/want")
-def want_book(book_id: int):
+def want_book(book_id: int, background: BackgroundTasks):
     put_on_shelf(book_id, "to-read", finished_at=None)
+    background.add_task(ensure_editions, book_id)
     log.info("Book wanted", extra={"book_id": book_id})
     return {"status": "saved", "book_id": book_id}
 
@@ -135,6 +161,7 @@ def finish_book(book_id: int, req: FinishRequest, background: BackgroundTasks):
         progress_pct=100,
         finished_at=func.now(),
     )
+    background.add_task(ensure_editions, book_id)
     log.info("Book finished", extra={"book_id": book_id, "rating": req.rating})
     background.add_task(after_finished_book)
     log.debug("Recommendation flow queued", extra={"book_id": book_id})
