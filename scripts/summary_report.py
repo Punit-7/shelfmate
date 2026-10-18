@@ -11,7 +11,7 @@ if books.empty:
     raise SystemExit("No summaries saved yet, so there is nothing to report.")
 print(books["summary_source"].value_counts(normalize=True).round(2).to_string(), "\n")
 
-logs = pd.read_json("logs/worker.jsonl", lines=True)
+logs = pd.read_json("logs/loader.jsonl", lines=True)
 accepted = (logs["message"] == "LLM summary accepted").sum()
 rejected = (logs["message"] == "LLM summary rejected, using description").sum()
 checked = accepted + rejected

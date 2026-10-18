@@ -28,7 +28,12 @@ def _get(path: str, params: dict) -> dict:
 
 
 def search_book(title: str, author: str) -> dict | None:
-    docs = _get("/search.json", {"title": title, "author": author, "limit": 1})["docs"]
+    # The dataset lists every contributor ("J.K. Rowling, Mary GrandPré"), and Open Library
+    # finds nothing when an illustrator or translator is included, so use the first author.
+    # Free-text `q` (not `title`) also matches US/UK title variants, such as Sorcerer's
+    # and Philosopher's Stone, and ranks the work with the most editions first.
+    params = {"q": title, "author": author.split(",")[0].strip(), "limit": 1}
+    docs = _get("/search.json", params)["docs"]
     if not docs:
         log.warning(
             "Book not found on Open Library", extra={"title": title, "author": author}

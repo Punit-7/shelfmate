@@ -1,11 +1,11 @@
-"""Fetches Open Library descriptions for books on my_shelf, then makes their summaries."""
+"""Fetches Open Library descriptions for the most-rated books, then makes their summaries."""
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from shelfmate.config import settings
 from shelfmate.data.openlibrary import get_description, search_book
-from shelfmate.db.models import Book, ShelfEntry
+from shelfmate.db.models import Book, Rating
 from shelfmate.logging_setup import new_run, setup_logging
 from shelfmate.recommender.summaries import get_summary
 
@@ -16,8 +16,14 @@ if __name__ == "__main__":
     new_run("fill-summaries")
     engine = create_engine(settings.database_url)
     with Session(engine) as session:
+        # The five most-rated books that have no summary yet.
         ids = session.scalars(
-            select(ShelfEntry.book_id).order_by(ShelfEntry.added_at).limit(LIMIT)
+            select(Rating.book_id)
+            .join(Book, Book.id == Rating.book_id)
+            .where(Book.summary.is_(None))
+            .group_by(Rating.book_id)
+            .order_by(func.count().desc())
+            .limit(LIMIT)
         ).all()
         for book_id in ids:
             book = session.get(Book, book_id)
