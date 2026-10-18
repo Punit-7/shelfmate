@@ -1,13 +1,22 @@
 import logging
 import re
 
+import httpx
 from langchain_ollama import ChatOllama
 
+from shelfmate.config import settings
+from shelfmate.data.openlibrary import get_description, search_book
 from shelfmate.logging_setup import timed
 
 log = logging.getLogger(__name__)
-MODEL = "qwen2.5:7b"
-llm = ChatOllama(model=MODEL, temperature=0)
+MODEL = settings.llm_model
+# A stalled Ollama server would otherwise block the pipeline forever.
+llm = ChatOllama(
+    model=MODEL,
+    base_url=settings.ollama_url,
+    temperature=0,
+    client_kwargs={"timeout": 120},
+)
 
 PROMPT = """You write short book summaries for a reading app.
 Use ONLY the description between the tags. Do not add names, places or events that are not in it.
@@ -90,10 +99,25 @@ def summarise(book_id: int, description: str | None) -> tuple[str, str]:
     return text, "llm"
 
 
+def fetch_description(book) -> None:
+    """Finds the book on Open Library if needed, and keeps its work ID and description."""
+    if book.description:
+        return
+    try:
+        if book.ol_work_id is None:
+            hit = search_book(book.title.split(" (")[0], book.author)
+            book.ol_work_id = hit["key"] if hit else None
+        if book.ol_work_id:
+            book.description = get_description(book.ol_work_id)
+    except httpx.HTTPError:
+        log.exception("Open Library lookup failed", extra={"book_id": book.id})
+
+
 def get_summary(session, book) -> tuple[str, str]:
     """Uses the saved summary if there is one. Otherwise creates it once and saves it."""
     if book.summary and book.summary_source != "none":
         return book.summary, book.summary_source
+    fetch_description(book)
     book.summary, book.summary_source = summarise(book.id, book.description)
     book.summary_model = MODEL
     session.commit()

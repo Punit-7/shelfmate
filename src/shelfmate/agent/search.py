@@ -7,13 +7,17 @@ from urllib.parse import urlparse
 import httpx
 
 from shelfmate.agent.schemas import PriceOffer
+from shelfmate.config import settings
 
 log = logging.getLogger(__name__)
-SEARX = "http://localhost:8080/search"
+SEARX = f"{settings.searxng_url}/search"
 PRICE = re.compile(r"(?:₹|Rs\.?|INR)\s?([\d,]+(?:\.\d{1,2})?)")
 # Snippets often show the list price or the discount before the selling price.
 NOT_PRICE_BEFORE = re.compile(r"(m\.?r\.?p\.?|save)\W*$", re.IGNORECASE)
 NOT_PRICE_AFTER = re.compile(r"^\W*off\b", re.IGNORECASE)
+
+# "5 books collection set" and similar are not the single book.
+BUNDLE = re.compile(r"\b(\d+ books?|box set|boxset|combo|collection|bundle|set of)\b")
 
 NEW_STORES = ["amazon.in", "flipkart.com", "bookswagon.com", "sapnaonline.com"]
 USED_STORES = ["bookchor.com", "kitabay.com"]
@@ -25,11 +29,11 @@ def searx(query: str) -> list[dict]:
     try:
         r = httpx.get(SEARX, params={"q": query, "format": "json"}, timeout=15)
         r.raise_for_status()
-    except httpx.HTTPError as e:
+        results = r.json()["results"][:10]
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         # 403 here usually means searxng/settings.yml does not allow the json format.
         log.warning("Search failed", extra={"query": query, "error": str(e)})
         return []
-    results = r.json()["results"][:10]
     ms = round((time.perf_counter() - start) * 1000, 1)
     log.debug(
         "Search returned %d results in %.1f ms",
@@ -54,17 +58,56 @@ def on_store(url: str, store: str) -> bool:
     return host == store or host.endswith("." + store)
 
 
-def find_offer(title, isbn13, fmt, store, condition) -> PriceOffer | None:
-    # ISBN queries often find no priced result, so fall back to title and format.
-    # The generator only runs the second search if the first gives no offer.
-    queries = [f"{title} {fmt} site:{store}"]
-    if isbn13:
-        queries.insert(0, f"{title} {isbn13} {fmt} site:{store}")
-    for res in (r for q in queries for r in searx(q)):
-        if not on_store(res["url"], store):
+def words(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+def is_this_book(text: str, own: str, title: str, author: str) -> bool:
+    """True if a result is about this book, not another book or a box set.
+
+    text is everything the result says. own is its page title and address, which must
+    name the book: a Golden Son page can mention Morning Star in its description.
+    Without the author, "Hopeless" matches Elsie Silver's Hopeless as readily as Colleen Hoover's.
+    """
+    t = words(text)
+    if words(title) not in words(own):
+        return False
+    if author and words(author).split()[-1] not in t:
+        return False
+    return not (BUNDLE.search(t) and not BUNDLE.search(words(title)))
+
+
+def format_of(text: str, formats: tuple[str, ...]) -> str | None:
+    """Which of the wanted formats the text is about. None if it names none or several."""
+    if len(formats) == 1:
+        return formats[0]
+    t = words(text)
+    found = [f for f in formats if f in t]
+    return found[0] if len(found) == 1 else None
+
+
+def find_offers(title, author, formats, store, condition) -> list[PriceOffer]:
+    """The cheapest valid price per format for this book at this store.
+
+    One search per store, not per format, because each search can trigger the
+    upstream engines' rate limits. The author goes into the query and the relevance
+    check, because a title alone matches other books.
+    ponytail: snippets only; many store pages show no price in the snippet, so some
+    books get no offer. Reading the page's own price would fix that.
+    """
+    first_author = author.split(",")[0].strip()
+    audio = formats == ("audiobook",)
+    query = f"{title} {first_author} {'audiobook' if audio else ''} site:{store}"
+    best: dict[str, PriceOffer] = {}
+    for res in searx(" ".join(query.split())):
+        text = f"{res.get('title', '')} {res.get('content', '')}"
+        own = f"{res.get('title', '')} {res['url']}"
+        if not on_store(res["url"], store) or not is_this_book(
+            f"{text} {res['url']}", own, title, first_author
+        ):
             continue
-        raw = selling_price(res.get("content", ""))
-        if not raw:
+        fmt, raw = format_of(f"{text} {res['url']}", formats), selling_price(text)
+        if not (fmt and raw):
             continue
         try:
             offer = PriceOffer(
@@ -87,29 +130,25 @@ def find_offer(title, isbn13, fmt, store, condition) -> PriceOffer | None:
                 },
             )
             continue
+        if fmt not in best or offer.price_inr < best[fmt].price_inr:
+            best[fmt] = offer
+    for fmt, offer in best.items():
         log.info(
             "Price found: %s (%s) at %s for Rs %.0f",
             title,
             fmt,
             store,
             offer.price_inr,
-            extra={
-                "isbn13": isbn13,
-                "store": store,
-                "book_format": fmt,
-                "price_inr": offer.price_inr,
-            },
+            extra={"store": store, "book_format": fmt, "price_inr": offer.price_inr},
         )
-        return offer
-    log.info(
-        "No price found for %s (%s) at %s",
-        title,
-        fmt,
-        store,
-        extra={"isbn13": isbn13, "store": store, "book_format": fmt},
-    )
-    return None
+    if not best:
+        log.info("No price found for %s at %s", title, store, extra={"store": store})
+    return list(best.values())
 
 
 if __name__ == "__main__":
-    print(find_offer("Golden Son", "9781444759044", "paperback", "amazon.in", "new"))
+    print(
+        find_offers(
+            "Golden Son", "Pierce Brown", ("paperback", "hardcover"), "amazon.in", "new"
+        )
+    )

@@ -4436,7 +4436,6 @@ dependencies = [
     { name = "implicit" },
     { name = "langchain-ollama" },
     { name = "langgraph" },
-    { name = "mlflow" },
     { name = "pandas" },
     { name = "pgvector" },
     { name = "prefect" },
@@ -4452,6 +4451,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "mlflow" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
@@ -4465,7 +4465,6 @@ requires-dist = [
     { name = "implicit", specifier = ">=0.7.3" },
     { name = "langchain-ollama", specifier = ">=1.1.0" },
     { name = "langgraph", specifier = ">=1.2.16" },
-    { name = "mlflow", specifier = ">=3.17.1" },
     { name = "pandas", specifier = ">=3.0.6" },
     { name = "pgvector", specifier = ">=0.5.1" },
     { name = "prefect", specifier = ">=3.8.8" },
@@ -4481,6 +4480,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "mlflow", specifier = ">=3.17.1" },
     { name = "pre-commit", specifier = ">=4.7.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.17.1" },

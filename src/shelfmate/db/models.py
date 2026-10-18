@@ -69,3 +69,29 @@ class ShelfEntry(Base):
     source: Mapped[str]  # where the entry came from, such as "agent" or "goodreads"
     added_at: Mapped[datetime] = mapped_column(server_default=func.now())
     finished_at: Mapped[datetime | None]
+
+
+class Price(Base):
+    """The cheapest offer found for one book, store, format and condition."""
+
+    __tablename__ = "prices"
+
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), primary_key=True)
+    store: Mapped[str] = mapped_column(primary_key=True)
+    format: Mapped[str] = mapped_column(primary_key=True)
+    condition: Mapped[str] = mapped_column(primary_key=True)
+    price_inr: Mapped[float]
+    url: Mapped[str]
+    checked_at: Mapped[datetime]
+
+
+class Recommendation(Base):
+    """One book on the Recommendations shelf. The pipeline replaces all rows each run."""
+
+    __tablename__ = "recommendations"
+
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), primary_key=True)
+    lane: Mapped[str]  # "continue" or "new"
+    rank: Mapped[int]
+    because: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

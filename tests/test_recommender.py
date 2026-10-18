@@ -20,6 +20,15 @@ def test_hybrid_cold_start_favours_content():
 def test_parse_series():
     assert parse_series("Golden Son (Red Rising, #2)") == ("Red Rising", 2.0)
     assert parse_series("The Martian") == (None, None)
+    assert parse_series("Soul Music (Discworld, #16; Death, #3)") == ("Discworld", 16.0)
+    assert parse_series("Raising Steam (Discworld, #40, Moist #3 )") == (
+        "Discworld",
+        40.0,
+    )
+    assert parse_series("The Lone Drow (Forgotten Realms: Hunter's Blades, #2)") == (
+        "Forgotten Realms: Hunter's Blades",
+        2.0,
+    )
 
 
 BOOKS = pd.DataFrame(
@@ -35,7 +44,7 @@ BOOKS = pd.DataFrame(
 
 def test_next_in_series_skips_novellas():
     read = BOOKS.iloc[:2].assign(rating=[5, 4])
-    assert next_in_series(read, BOOKS) == ["RR3"]
+    assert next_in_series(read, BOOKS) == [3]  # RR3, not the 2.5 novella
 
 
 def test_next_in_series_stops_on_low_rating():

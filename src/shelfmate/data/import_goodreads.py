@@ -8,6 +8,7 @@ from shelfmate.db.models import Book, ShelfEntry
 
 log = logging.getLogger(__name__)
 SHELVES = {"read", "currently-reading", "to-read"}
+COLUMNS = {"Title", "Author", "Exclusive Shelf", "My Rating", "Date Read"}
 
 
 def norm(text: str) -> str:
@@ -24,8 +25,19 @@ def find_book(title: str, author: str, index: dict) -> int | None:
 
 
 def import_goodreads(csv_file, engine) -> dict:
-    """Adds books from a Goodreads export to my_shelf. Entries already on the shelf are kept."""
-    rows = pd.read_csv(csv_file, dtype=str).fillna("")
+    """Adds books from a Goodreads export to my_shelf. Entries already on the shelf are kept.
+
+    Raises ValueError if the file is not a CSV with the Goodreads export columns.
+    """
+    try:
+        rows = pd.read_csv(csv_file, dtype=str).fillna("")
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError) as e:
+        raise ValueError(f"Not a readable CSV file: {e}") from e
+    missing = COLUMNS - set(rows.columns)
+    if missing:
+        raise ValueError(
+            f"Not a Goodreads export, missing: {', '.join(sorted(missing))}"
+        )
     with Session(engine) as session:
         index: dict[str, list] = {}
         for book in session.execute(select(Book.id, Book.title, Book.author)):

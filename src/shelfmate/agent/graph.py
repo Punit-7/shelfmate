@@ -9,6 +9,7 @@ from shelfmate.agent.tools import (
     log_finished_book,
     recommend_books,
 )
+from shelfmate.config import settings
 from shelfmate.logging_setup import new_run, setup_logging, timed
 
 log = logging.getLogger(__name__)
@@ -25,7 +26,12 @@ nothing, say so. Never invent titles or prices.
 Show prices in rupees with the store name and link."""
 
 # A stalled Ollama server would otherwise block a chat turn forever.
-llm = ChatOllama(model="qwen2.5:7b", temperature=0, client_kwargs={"timeout": 120})
+llm = ChatOllama(
+    model=settings.llm_model,
+    base_url=settings.ollama_url,
+    temperature=0,
+    client_kwargs={"timeout": 120},
+)
 agent = create_react_agent(
     llm,
     tools=[recommend_books, find_cheapest_prices, find_audiobook, log_finished_book],

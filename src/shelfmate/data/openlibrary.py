@@ -42,6 +42,36 @@ def search_book(title: str, author: str) -> dict | None:
     return docs[0]
 
 
+def search_books(query: str, limit: int = 10) -> list[dict]:
+    """Free-text search for the website's "add a book" box."""
+    params = {
+        "q": query,
+        "limit": limit,
+        "fields": "key,title,author_name,first_publish_year",
+    }
+    return [
+        {
+            "ol_work_id": d["key"],
+            "title": d["title"],
+            "author": ", ".join(d.get("author_name", [])) or "Unknown",
+            "year": d.get("first_publish_year"),
+        }
+        for d in _get("/search.json", params)["docs"]
+    ]
+
+
+def new_books_by(author: str, since_year: int) -> list[dict]:
+    """Works by an author first published in or after since_year, newest first."""
+    params = {
+        "author": author.split(",")[0].strip(),
+        "sort": "new",
+        "limit": 5,
+        "fields": "key,title,first_publish_year",
+    }
+    docs = _get("/search.json", params)["docs"]
+    return [d for d in docs if (d.get("first_publish_year") or 0) >= since_year]
+
+
 def get_editions(work_key: str) -> list[dict]:
     entries = _get(f"{work_key}/editions.json", {"limit": 50})["entries"]
     editions = []
