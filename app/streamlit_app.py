@@ -7,7 +7,6 @@ from shelfmate.config import settings
 from shelfmate.logging_setup import setup_logging
 
 API = settings.api_url
-COVER = "https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg"
 log = logging.getLogger("shelfmate.web")
 
 
@@ -57,8 +56,20 @@ def done(message: str) -> None:
 
 
 def cover(book: dict, width: int) -> None:
-    if book.get("isbn13"):
-        st.image(COVER.format(isbn=book["isbn13"]), width=width)
+    if book.get("cover_url"):
+        st.image(book["cover_url"], width=width)
+    else:
+        st.caption("No cover")
+
+
+def remove_button(book: dict) -> None:
+    """Takes the book off your shelves, after a confirmation."""
+    with st.popover("Remove"):
+        st.write(f"Remove {book['title']} from your shelves?")
+        if st.button("Yes, remove", key=f"d{book['book_id']}") and call_api(
+            "DELETE", f"/shelf/{book['book_id']}"
+        ):
+            done(f"Removed {book['title']}.")
 
 
 def grid(books: list[dict], actions) -> None:
@@ -71,13 +82,31 @@ def grid(books: list[dict], actions) -> None:
             cover(book, 160)
             st.markdown(f"**{book['title']}**  \n{book['author']}")
             actions(book)
+            remove_button(book)
 
 
 def reading_actions(book: dict) -> None:
     key = book["book_id"]
-    progress = st.slider("Progress %", 0, 100, book["progress_pct"], key=f"p{key}")
-    if progress != book["progress_pct"]:
-        call_api("PATCH", f"/shelf/{key}/progress", json={"progress_pct": progress})
+    chapter, total = book["chapter"], book["total_chapters"]
+    if total:
+        st.progress(min(chapter / total, 1.0), text=f"Chapter {chapter} of {total}")
+    else:
+        st.caption(f"Chapter {chapter} (total not set)")
+    with st.form(f"chapters{key}", border=False):
+        left, right = st.columns(2)
+        new_chapter = left.number_input("Chapter", 0, 10_000, chapter)
+        new_total = right.number_input(
+            "Total chapters", 0, 10_000, total or 0, help="0 means not set"
+        )
+        if st.form_submit_button("Save progress"):
+            if new_total and new_chapter > new_total:
+                st.error("The chapter cannot be past the last chapter.")
+            elif call_api(
+                "PATCH",
+                f"/shelf/{key}/progress",
+                json={"chapter": new_chapter, "total_chapters": new_total or None},
+            ):
+                done("Progress saved.")
     rating = st.select_slider("Rating", options=[1, 2, 3, 4, 5], value=4, key=f"r{key}")
     if st.button("Finished", key=f"f{key}"):
         result = call_api("POST", f"/shelf/{key}/finish", json={"rating": rating})
@@ -174,7 +203,12 @@ with recs:
                     st.dataframe(
                         book["offers"],
                         hide_index=True,
-                        column_config={"url": st.column_config.LinkColumn("Link")},
+                        column_config={
+                            "url": st.column_config.LinkColumn("Link"),
+                            "price_inr": st.column_config.NumberColumn(
+                                "Price", format="₹%.0f"
+                            ),
+                        },
                     )
                 else:
                     st.caption("No prices found yet.")

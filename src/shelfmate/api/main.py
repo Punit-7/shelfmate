@@ -6,15 +6,15 @@ from typing import Literal
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from shelfmate.config import settings
 from shelfmate.data.import_goodreads import import_goodreads
 from shelfmate.data.openlibrary import search_books
-from shelfmate.db.models import Book, Edition, Price, Recommendation, ShelfEntry
-from shelfmate.flows.pipeline import after_finished_book, ensure_editions
+from shelfmate.db.models import Book, Price, Recommendation, ShelfEntry
+from shelfmate.flows.pipeline import after_finished_book, ensure_cover
 from shelfmate.logging_setup import run_id, setup_logging
 
 setup_logging("api")
@@ -76,7 +76,14 @@ class FinishRequest(BaseModel):
 
 
 class ProgressRequest(BaseModel):
-    progress_pct: int = Field(ge=0, le=100)
+    chapter: int = Field(ge=0, le=10_000)
+    total_chapters: int | None = Field(default=None, ge=1, le=10_000)
+
+    @model_validator(mode="after")
+    def chapter_within_book(self):
+        if self.total_chapters is not None and self.chapter > self.total_chapters:
+            raise ValueError("chapter cannot be more than total_chapters")
+        return self
 
 
 class AddBookRequest(BaseModel):
@@ -89,36 +96,31 @@ class AddBookRequest(BaseModel):
     shelf: Literal["currently-reading", "to-read"]
 
 
-def first_isbn(book_id):
-    """The book's first saved ISBN, used for its cover image."""
-    # ponytail: one ISBN per book (first by id), add a join if a book needs them all
-    return (
-        select(Edition.isbn13)
-        .where(Edition.book_id == book_id)
-        .order_by(Edition.id)
-        .limit(1)
-        .scalar_subquery()
-        .label("isbn13")
-    )
-
-
 @app.get("/shelf")
-def list_shelf(name: Literal["read", "currently-reading", "to-read"]):
+def list_shelf(
+    name: Literal["read", "currently-reading", "to-read"], background: BackgroundTasks
+):
     with Session(engine) as session:
         rows = session.execute(
             select(
                 ShelfEntry.book_id,
                 Book.title,
                 Book.author,
-                first_isbn(ShelfEntry.book_id),
+                Book.cover_url,
                 ShelfEntry.rating,
-                ShelfEntry.progress_pct,
+                ShelfEntry.chapter,
+                ShelfEntry.total_chapters,
             )
             .join(Book, Book.id == ShelfEntry.book_id)
             .where(ShelfEntry.shelf == name)
             .order_by(ShelfEntry.added_at.desc())
         ).mappings()
-        return [dict(row) for row in rows]
+        books = [dict(row) for row in rows]
+    # A book with no cover lookup yet gets one now, and shows it on the next reload.
+    for b in books:
+        if b["cover_url"] is None:
+            background.add_task(ensure_cover, b["book_id"])
+    return books
 
 
 def put_on_shelf(book_id: int, shelf: str, source: str = "api", **fields) -> None:
@@ -171,7 +173,7 @@ def add_book(req: AddBookRequest, background: BackgroundTasks):
             background.add_task(embed_new_books)
         book_id = book.id
     put_on_shelf(book_id, req.shelf, source="manual", finished_at=None)
-    background.add_task(ensure_editions, book_id)
+    background.add_task(ensure_cover, book_id)
     log.info("Book added", extra={"book_id": book_id, "shelf": req.shelf})
     return {"status": "saved", "book_id": book_id}
 
@@ -184,15 +186,30 @@ def update_progress(book_id: int, req: ProgressRequest):
             raise HTTPException(
                 status_code=404, detail=f"Book {book_id} is not shelved"
             )
-        entry.progress_pct = req.progress_pct
+        entry.chapter, entry.total_chapters = req.chapter, req.total_chapters
         session.commit()
-    return {"status": "saved", "book_id": book_id, "progress_pct": req.progress_pct}
+    return {"status": "saved", "book_id": book_id, **req.model_dump()}
+
+
+@app.delete("/shelf/{book_id}")
+def remove_book(book_id: int):
+    """Takes a book off your shelves. The book stays in the catalogue."""
+    with Session(engine) as session:
+        entry = session.get(ShelfEntry, book_id)
+        if entry is None:
+            raise HTTPException(
+                status_code=404, detail=f"Book {book_id} is not shelved"
+            )
+        session.delete(entry)
+        session.commit()
+    log.info("Book removed", extra={"book_id": book_id})
+    return {"status": "removed", "book_id": book_id}
 
 
 @app.post("/shelf/{book_id}/start")
 def start_book(book_id: int, background: BackgroundTasks):
     put_on_shelf(book_id, "currently-reading", finished_at=None)
-    background.add_task(ensure_editions, book_id)
+    background.add_task(ensure_cover, book_id)
     log.info("Book started", extra={"book_id": book_id})
     return {"status": "saved", "book_id": book_id}
 
@@ -200,7 +217,7 @@ def start_book(book_id: int, background: BackgroundTasks):
 @app.post("/shelf/{book_id}/want")
 def want_book(book_id: int, background: BackgroundTasks):
     put_on_shelf(book_id, "to-read", finished_at=None)
-    background.add_task(ensure_editions, book_id)
+    background.add_task(ensure_cover, book_id)
     log.info("Book wanted", extra={"book_id": book_id})
     return {"status": "saved", "book_id": book_id}
 
@@ -211,10 +228,9 @@ def finish_book(book_id: int, req: FinishRequest, background: BackgroundTasks):
         book_id,
         "read",
         rating=req.rating,
-        progress_pct=100,
         finished_at=func.now(),
     )
-    background.add_task(ensure_editions, book_id)
+    background.add_task(ensure_cover, book_id)
     log.info("Book finished", extra={"book_id": book_id, "rating": req.rating})
     background.add_task(after_finished_book)
     log.debug("Recommendation flow queued", extra={"book_id": book_id})
@@ -222,7 +238,7 @@ def finish_book(book_id: int, req: FinishRequest, background: BackgroundTasks):
 
 
 @app.get("/recommendations")
-def list_recommendations():
+def list_recommendations(background: BackgroundTasks):
     """Both lanes from the last pipeline run, with summaries, reasons and saved prices."""
     with Session(engine) as session:
         books = [
@@ -236,7 +252,7 @@ def list_recommendations():
                     Book.author,
                     Book.summary,
                     Book.summary_source,
-                    first_isbn(Recommendation.book_id),
+                    Book.cover_url,
                 )
                 .join(Book, Book.id == Recommendation.book_id)
                 .order_by(Recommendation.rank)
@@ -260,6 +276,8 @@ def list_recommendations():
             )
     lanes: dict[str, list] = {"continue": [], "new": []}
     for b in books:
+        if b["cover_url"] is None:
+            background.add_task(ensure_cover, b["book_id"])
         lanes[b.pop("lane")].append({**b, "offers": offers.get(b["book_id"], [])})
     return lanes
 

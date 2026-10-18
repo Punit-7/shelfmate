@@ -64,7 +64,6 @@ def import_goodreads(csv_file, engine) -> dict:
                         book_id=book_id,
                         shelf=shelf,
                         rating=int(row["My Rating"] or 0),
-                        progress_pct=100 if shelf == "read" else 0,
                         source="goodreads",
                         finished_at=finished.to_pydatetime()
                         if pd.notna(finished)
