@@ -1,7 +1,5 @@
-import contextvars
 import functools
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import numpy as np
@@ -10,7 +8,7 @@ from langchain_core.tools import tool
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.dialects.postgresql import insert
 
-from shelfmate.agent.search import AUDIO_STORES, NEW_STORES, USED_STORES, find_offers
+from shelfmate.agent.search import AUDIO_STORES, NEW_STORES, store_links
 from shelfmate.config import settings
 from shelfmate.db.models import Book, ShelfEntry
 from shelfmate.logging_setup import timed
@@ -23,11 +21,6 @@ log = logging.getLogger(__name__)
 engine = create_engine(settings.database_url)
 
 CANDIDATES = 50  # the lane filters remove many books, so rank more than we show
-PRINT = ("paperback", "hardcover")
-PRINT_JOBS = [(PRINT, s, "new") for s in NEW_STORES] + [
-    (PRINT, s, "used") for s in USED_STORES
-]
-AUDIO_JOBS = [(("audiobook",), s, "new") for s in AUDIO_STORES]
 POPULAR = "One of the most-liked books among all readers"
 
 
@@ -207,38 +200,26 @@ def recommend_books(n: int = 5) -> list[dict]:
     return recommend(n)
 
 
-def search_offers(title: str, jobs: list[tuple]) -> list[dict]:
-    """Run find_offers for each (formats, store, condition) in parallel, cheapest first."""
+def shop_links(title: str, stores: list[str]) -> list[dict]:
+    """Search links for a book on these stores, using the catalogue's title and author."""
     found = find_book(title)
-    name = short_title(found.title) if found else title
-    author = found.author if found else ""
-    # Each thread gets a copy of this context, so search logs keep the chat's run ID.
-    contexts = [contextvars.copy_context() for _ in jobs]
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        offers = pool.map(
-            lambda ctx, job: ctx.run(find_offers, name, author, *job), contexts, jobs
-        )
-        offers = sorted(
-            (o for found in offers for o in found), key=lambda o: o.price_inr
-        )
-    return [o.model_dump(mode="json") for o in offers]
+    if found:
+        return store_links(found.title, found.author, stores)
+    return store_links(title, "", stores)
 
 
 @tool
 @log_tool
 def find_cheapest_prices(title: str) -> list[dict]:
-    """Find the cheapest new and used hardcover and paperback prices in India for a book."""
-    cheapest = {}
-    for offer in search_offers(title, PRINT_JOBS):
-        cheapest.setdefault((offer["format"], offer["condition"]), offer)
-    return list(cheapest.values())
+    """Store links for a book's print edition. Open them to see the current price."""
+    return shop_links(title, NEW_STORES)
 
 
 @tool
 @log_tool
 def find_audiobook(title: str) -> list[dict]:
-    """Find audiobook listings for a book on Audible India and Google Play Books."""
-    return search_offers(title, AUDIO_JOBS)
+    """Store links for a book's audiobook on Audible India."""
+    return shop_links(title, AUDIO_STORES)
 
 
 @tool

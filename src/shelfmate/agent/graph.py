@@ -21,9 +21,9 @@ Pass book titles to the tools exactly as the reader wrote them.
 - The reader asks about prices, deals or where to buy: call find_cheapest_prices.
 - The reader asks about audiobooks or listening: call find_audiobook.
 A message can need more than one tool; call every tool it needs.
-Only mention books, prices and links that a tool returned. If a tool returns
-nothing, say so. Never invent titles or prices.
-Show prices in rupees with the store name and link."""
+Only mention books and links that a tool returned. Never invent titles or prices.
+The tools return search links, not prices: tell the reader to open a store's
+link to see its current price."""
 
 # A stalled Ollama server would otherwise block a chat turn forever.
 llm = ChatOllama(

@@ -199,16 +199,7 @@ with recs:
                         "Summary written by a local AI model from the Open Library description."
                     )
                 st.caption(book["because"])
-                if book["offers"]:
-                    st.dataframe(
-                        book["offers"],
-                        hide_index=True,
-                        column_config={
-                            "url": st.column_config.LinkColumn("Link"),
-                            "price_inr": st.column_config.NumberColumn(
-                                "Price", format="₹%.0f"
-                            ),
-                        },
-                    )
-                else:
-                    st.caption("No prices found yet.")
+                st.markdown(
+                    "Find it: "
+                    + " · ".join(f"[{s['store']}]({s['url']})" for s in book["shops"])
+                )

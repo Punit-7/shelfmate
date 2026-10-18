@@ -10,12 +10,14 @@ from shelfmate.logging_setup import timed
 
 log = logging.getLogger(__name__)
 MODEL = settings.llm_model
-# A stalled Ollama server would otherwise block the pipeline forever.
+# A stalled Ollama server would otherwise block the pipeline forever. A cold model load
+# takes over 3 minutes on a CPU-only PC, so the timeout is longer than that.
 llm = ChatOllama(
     model=MODEL,
     base_url=settings.ollama_url,
     temperature=0,
-    client_kwargs={"timeout": 120},
+    client_kwargs={"timeout": 300},
+    keep_alive="30m",  # stay loaded between books instead of reloading after 5 minutes
 )
 
 PROMPT = """You write short book summaries for a reading app.

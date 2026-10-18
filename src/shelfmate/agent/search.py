@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urlparse
 
 import httpx
 
@@ -19,9 +19,23 @@ NOT_PRICE_AFTER = re.compile(r"^\W*off\b", re.IGNORECASE)
 # "5 books collection set" and similar are not the single book.
 BUNDLE = re.compile(r"\b(\d+ books?|box set|boxset|combo|collection|bundle|set of)\b")
 
+# Search pages on each store. We link to them instead of reading prices, so no store API is needed.
+SEARCH_PAGES = {
+    "amazon.in": "https://www.amazon.in/s?k={q}",
+    "flipkart.com": "https://www.flipkart.com/search?q={q}",
+    "bookswagon.com": "https://www.bookswagon.com/search-books/{q}",
+    "sapnaonline.com": "https://www.sapnaonline.com/search?q={q}",
+    "audible.in": "https://www.audible.in/search?keywords={q}",
+}
 NEW_STORES = ["amazon.in", "flipkart.com", "bookswagon.com", "sapnaonline.com"]
-USED_STORES = ["bookchor.com", "kitabay.com"]
-AUDIO_STORES = ["audible.in", "play.google.com"]
+AUDIO_STORES = ["audible.in"]
+
+
+def store_links(title: str, author: str, stores: list[str]) -> list[dict]:
+    """A search page on each store for this book. The store shows the current price."""
+    # The series part and a second author make worse searches, so leave them out.
+    q = quote_plus(f"{title.split(' (')[0]} {author.split(',')[0]}".strip())
+    return [{"store": s, "url": SEARCH_PAGES[s].format(q=q)} for s in stores]
 
 
 def searx(query: str) -> list[dict]:

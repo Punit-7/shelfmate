@@ -1,21 +1,15 @@
 import html
 import logging
-from datetime import datetime, timedelta
 
 import httpx
 from prefect import flow, task
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from shelfmate.agent.tools import (
-    AUDIO_JOBS,
-    PRINT_JOBS,
-    engine,
-    recommend,
-    search_offers,
-)
+from shelfmate.agent.search import NEW_STORES
+from shelfmate.agent.tools import engine, recommend, shop_links
 from shelfmate.data.openlibrary import english_cover, search_book
-from shelfmate.db.models import Book, Price, Recommendation
+from shelfmate.db.models import Book, Recommendation
 from shelfmate.logging_setup import new_run, timed
 from shelfmate.notify import email_ready, send_email
 from shelfmate.recommender.summaries import get_summary
@@ -26,41 +20,6 @@ log = logging.getLogger(__name__)
 @task(retries=3, retry_delay_seconds=[10, 20, 40])
 def get_recommendations(n: int = 5) -> list[dict]:
     return recommend(n)
-
-
-@task(retries=3, retry_delay_seconds=[10, 20, 40])
-def get_prices(book: dict, reuse_hours: int = 24) -> list[dict]:
-    """Offers for a book. Prices saved in the last reuse_hours are used instead of searching."""
-    since = datetime.now() - timedelta(hours=reuse_hours)
-    with Session(engine) as session:
-        saved = session.scalars(
-            select(Price).where(
-                Price.book_id == book["book_id"], Price.checked_at > since
-            )
-        ).all()
-    if saved:
-        log.info("Using saved prices", extra={"book_id": book["book_id"]})
-        return [
-            {
-                "store": p.store,
-                "format": p.format,
-                "condition": p.condition,
-                "price_inr": p.price_inr,
-                "url": p.url,
-                "checked_at": p.checked_at.isoformat(),
-            }
-            for p in saved
-        ]
-    offers = search_offers(book["title"], PRINT_JOBS + AUDIO_JOBS)
-    log.info(
-        "Found %d offers for %s",
-        len(offers),
-        book["title"],
-        extra={"book_id": book["book_id"], "offers": len(offers)},
-    )
-    if not offers:
-        log.warning("No prices found", extra={"book_id": book["book_id"]})
-    return offers
 
 
 def ensure_cover(book_id: int) -> None:
@@ -95,50 +54,24 @@ def fill_details(book_id: int) -> None:
         log.warning("No summary this run", extra={"book_id": book_id}, exc_info=True)
 
 
-def save_prices(session: Session, book_id: int, offers: list[dict]) -> None:
-    """Replaces the book's saved prices. Keeps the old ones if the search found nothing."""
-    if not offers:
-        return
-    session.execute(delete(Price).where(Price.book_id == book_id))
-    session.execute(
-        insert(Price),
-        [
-            {
-                "book_id": book_id,
-                "store": o["store"],
-                "format": o["format"],
-                "condition": o["condition"],
-                "price_inr": o["price_inr"],
-                "url": o["url"],
-                "checked_at": datetime.fromisoformat(o["checked_at"]),
-            }
-            for o in offers
-        ],
-    )
-
-
-def offer_line(offer: dict) -> str:
-    return (
-        f'Rs {offer["price_inr"]:,.0f} at <a href="{html.escape(offer["url"])}">'
-        f"{html.escape(offer['store'])}</a> ({offer['condition']} {offer['format']})"
-    )
-
-
 def email_html(results: list[dict]) -> str:
     parts = ["<h2>Your next books</h2>"]
     for r in results:
-        cheapest = min(r["offers"], key=lambda o: o["price_inr"], default=None)
+        links = " · ".join(
+            f'<a href="{html.escape(s["url"])}">{html.escape(s["store"])}</a>'
+            for s in r["shops"]
+        )
         parts.append(
             f"<h3>{html.escape(r['title'])}</h3>"
             f"<p>{html.escape(r['author'])}<br><i>{html.escape(r['because'])}</i></p>"
-            f"<p>{offer_line(cheapest) if cheapest else 'No price found yet.'}</p>"
+            f"<p>Find it: {links}</p>"
         )
     return "\n".join(parts)
 
 
 @task
 def save_and_email(results: list[dict]) -> None:
-    """Replaces the Recommendations shelf and the prices, then emails the list."""
+    """Replaces the Recommendations shelf, then emails the list."""
     with Session(engine) as session, session.begin():
         session.execute(delete(Recommendation))
         for rank, r in enumerate(results):
@@ -150,7 +83,6 @@ def save_and_email(results: list[dict]) -> None:
                     because=r["because"],
                 )
             )
-            save_prices(session, r["book_id"], r["offers"])
             r["author"] = session.get(Book, r["book_id"]).author
     if not email_ready():
         log.warning("Email is not set up in .env, skipping the email")
@@ -169,6 +101,6 @@ def after_finished_book():
             return
         for b in books:
             fill_details(b["book_id"])
-        results = [{**b, "offers": get_prices(b)} for b in books]
+        results = [{**b, "shops": shop_links(b["title"], NEW_STORES)} for b in books]
         save_and_email(results)
     log.info("Sent %d recommendations", len(results), extra={"books": len(results)})

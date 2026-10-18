@@ -10,10 +10,11 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
+from shelfmate.agent.search import NEW_STORES, store_links
 from shelfmate.config import settings
 from shelfmate.data.import_goodreads import import_goodreads
 from shelfmate.data.openlibrary import search_books
-from shelfmate.db.models import Book, Price, Recommendation, ShelfEntry
+from shelfmate.db.models import Book, Recommendation, ShelfEntry
 from shelfmate.flows.pipeline import after_finished_book, ensure_cover
 from shelfmate.logging_setup import run_id, setup_logging
 
@@ -239,7 +240,7 @@ def finish_book(book_id: int, req: FinishRequest, background: BackgroundTasks):
 
 @app.get("/recommendations")
 def list_recommendations(background: BackgroundTasks):
-    """Both lanes from the last pipeline run, with summaries, reasons and saved prices."""
+    """Both lanes from the last pipeline run, with summaries, reasons and store links."""
     with Session(engine) as session:
         books = [
             dict(row)
@@ -258,27 +259,12 @@ def list_recommendations(background: BackgroundTasks):
                 .order_by(Recommendation.rank)
             ).mappings()
         ]
-        offers: dict[int, list] = {}
-        for p in session.scalars(
-            select(Price)
-            .where(Price.book_id.in_([b["book_id"] for b in books]))
-            .order_by(Price.price_inr)
-        ):
-            offers.setdefault(p.book_id, []).append(
-                {
-                    "store": p.store,
-                    "format": p.format,
-                    "condition": p.condition,
-                    "price_inr": p.price_inr,
-                    "url": p.url,
-                    "checked_at": p.checked_at,
-                }
-            )
     lanes: dict[str, list] = {"continue": [], "new": []}
     for b in books:
         if b["cover_url"] is None:
             background.add_task(ensure_cover, b["book_id"])
-        lanes[b.pop("lane")].append({**b, "offers": offers.get(b["book_id"], [])})
+        shops = store_links(b["title"], b["author"], NEW_STORES)
+        lanes[b.pop("lane")].append({**b, "shops": shops})
     return lanes
 
 
