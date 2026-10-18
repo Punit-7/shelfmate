@@ -1,4 +1,8 @@
+import pytest
+from pydantic import ValidationError
+
 from shelfmate.agent.search import format_of, is_this_book, on_store, selling_price
+from shelfmate.api.main import ProgressRequest
 
 
 def test_selling_price_skips_mrp_and_discounts():
@@ -37,3 +41,12 @@ def test_format_of_needs_exactly_one_format():
     assert format_of("Other formats: Hardcover, Paperback", both) is None
     assert format_of("Buy Hopeless", both) is None
     assert format_of("Buy Hopeless", ("audiobook",)) == "audiobook"
+
+
+def test_progress_chapter_must_fit_the_book():
+    ProgressRequest(chapter=5, total_chapters=40)
+    ProgressRequest(chapter=5)  # total not known yet
+    with pytest.raises(ValidationError):
+        ProgressRequest(chapter=41, total_chapters=40)
+    with pytest.raises(ValidationError):
+        ProgressRequest(chapter=-1)

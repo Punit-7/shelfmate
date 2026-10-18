@@ -65,7 +65,8 @@ class ShelfEntry(Base):
     book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), primary_key=True)
     shelf: Mapped[str]  # "read", "currently-reading" or "to-read"
     rating: Mapped[int] = mapped_column(default=0)  # 0 means not rated
-    progress_pct: Mapped[int] = mapped_column(default=0)
+    chapter: Mapped[int] = mapped_column(default=0)  # the chapter you are on
+    total_chapters: Mapped[int | None]  # None until you enter it
     source: Mapped[str]  # where the entry came from, such as "agent" or "goodreads"
     added_at: Mapped[datetime] = mapped_column(server_default=func.now())
     finished_at: Mapped[datetime | None]

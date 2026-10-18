@@ -8,6 +8,7 @@ from shelfmate.logging_setup import new_run, setup_logging
 log = logging.getLogger(__name__)
 HEADERS = {"User-Agent": "Shelfmate/0.1 (punit251299@gmail.com)"}
 BASE = "https://openlibrary.org"
+COVER = "https://covers.openlibrary.org/b/id/{id}-M.jpg"
 
 
 def _get(path: str, params: dict) -> dict:
@@ -70,6 +71,20 @@ def new_books_by(author: str, since_year: int) -> list[dict]:
     }
     docs = _get("/search.json", params)["docs"]
     return [d for d in docs if (d.get("first_publish_year") or 0) >= since_year]
+
+
+def english_cover(work_key: str) -> str | None:
+    """The cover of an English edition of the work, or None.
+
+    The work's own cover (cover_i) can be a foreign edition, so covers are taken from
+    English editions only. A book with no English cover shows none, not a foreign one.
+    """
+    entries = _get(f"{work_key}/editions.json", {"limit": 50})["entries"]
+    for e in entries:
+        langs = [lang["key"] for lang in e.get("languages", [])]
+        if "/languages/eng" in langs and e.get("covers"):
+            return COVER.format(id=e["covers"][0])
+    return None
 
 
 def get_editions(work_key: str) -> list[dict]:

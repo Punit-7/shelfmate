@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 import httpx
 from prefect import flow, task
 from sqlalchemy import delete, insert, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from shelfmate.agent.tools import (
@@ -15,8 +14,8 @@ from shelfmate.agent.tools import (
     recommend,
     search_offers,
 )
-from shelfmate.data.openlibrary import get_editions, search_book
-from shelfmate.db.models import Book, Edition, Price, Recommendation
+from shelfmate.data.openlibrary import english_cover, search_book
+from shelfmate.db.models import Book, Price, Recommendation
 from shelfmate.logging_setup import new_run, timed
 from shelfmate.notify import email_ready, send_email
 from shelfmate.recommender.summaries import get_summary
@@ -64,35 +63,31 @@ def get_prices(book: dict, reuse_hours: int = 24) -> list[dict]:
     return offers
 
 
-def ensure_editions(book_id: int) -> None:
-    """Fills the editions table from Open Library the first time a book is shown."""
+def ensure_cover(book_id: int) -> None:
+    """Looks the book up on Open Library once, and saves its work ID and cover address."""
     with Session(engine) as session:
-        if session.scalar(
-            select(Edition.id).where(Edition.book_id == book_id).limit(1)
-        ):
-            return
         book = session.get(Book, book_id)
-        title = book.title.split(" (")[0]  # drop the "(Series, #1)" suffix
+        if book is None or book.cover_url is not None:
+            return
         try:
-            if book.ol_work_id is None:
-                hit = search_book(title, book.author)
-                book.ol_work_id = hit["key"] if hit else None
-            editions = get_editions(book.ol_work_id) if book.ol_work_id else []
+            hit = search_book(book.title.split(" (")[0], book.author)
         except httpx.HTTPError:
             log.warning(
                 "Open Library lookup failed", extra={"book_id": book_id}, exc_info=True
             )
             return
-        if editions:
-            rows = [{"book_id": book_id, **e} for e in editions]
-            session.execute(pg_insert(Edition).values(rows).on_conflict_do_nothing())
+        book.ol_work_id = book.ol_work_id or (hit["key"] if hit else None)
+        # "" means looked up, no English cover. None means not looked up yet.
+        book.cover_url = (
+            english_cover(book.ol_work_id) if book.ol_work_id else None
+        ) or ""
         session.commit()
 
 
 @task
 def fill_details(book_id: int) -> None:
-    """ISBNs for the cover, then a summary. A failure only costs these, not the run."""
-    ensure_editions(book_id)
+    """The cover, then a summary. A failure only costs these, not the run."""
+    ensure_cover(book_id)
     try:
         with Session(engine) as session:
             get_summary(session, session.get(Book, book_id))
