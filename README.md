@@ -2,6 +2,10 @@
 
 Shelfmate recommends your next book after you finish one, explains why, and links to stores that stock it.
 
+## Demo
+
+<!-- TODO: record a GIF of finishing a book and getting recommendations, save as docs/demo.gif, then use ![Demo](docs/demo.gif) -->
+
 ## Architecture
 
 ```
@@ -23,6 +27,20 @@ Hidden-book test on 2,000 readers (`scripts/evaluate.py`, logged to MLflow):
 | ALS        | 0.293       | 0.098    |
 
 Summaries are checked against the book description; `scripts/summary_report.py` prints the grounding pass rate.
+
+## Tech stack
+
+| Part | Tool |
+|------|------|
+| API | FastAPI, uvicorn |
+| Website | Streamlit |
+| Database | Postgres + pgvector, SQLAlchemy, Alembic |
+| Recommender | implicit (ALS), sentence-transformers (embeddings) |
+| Agent and LLM | LangGraph, Ollama |
+| Store search | SearXNG |
+| Weekly flow | Prefect |
+| Experiments | MLflow |
+| Tooling | uv, ruff, pytest, pre-commit, GitHub Actions, Docker Compose |
 
 ## Run it locally
 
