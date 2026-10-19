@@ -32,6 +32,7 @@ class Book(Base):
     summary: Mapped[str | None]
     summary_source: Mapped[str | None]  # "llm", "description" or "none"
     summary_model: Mapped[str | None]
+    genres: Mapped[str | None]  # "science-fiction, dystopian", from the goodbooks tags
     series_name: Mapped[str | None]
     series_pos: Mapped[float | None]
     embedding = mapped_column(Vector(384), nullable=True)

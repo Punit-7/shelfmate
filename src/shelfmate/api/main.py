@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from shelfmate.agent.search import NEW_STORES, store_links
+from shelfmate.agent.search import NEW_STORES, stocked_links
 from shelfmate.config import settings
 from shelfmate.data.import_goodreads import import_goodreads
 from shelfmate.data.openlibrary import search_books
@@ -260,11 +260,11 @@ def list_recommendations(background: BackgroundTasks):
             ).mappings()
         ]
     lanes: dict[str, list] = {"continue": [], "new": []}
-    for b in books:
+    shops = stocked_links([(b["title"], b["author"]) for b in books], NEW_STORES)
+    for b, links in zip(books, shops):
         if b["cover_url"] is None:
             background.add_task(ensure_cover, b["book_id"])
-        shops = store_links(b["title"], b["author"], NEW_STORES)
-        lanes[b.pop("lane")].append({**b, "shops": shops})
+        lanes[b.pop("lane")].append({**b, "shops": links})
     return lanes
 
 

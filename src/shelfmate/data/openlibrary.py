@@ -73,6 +73,20 @@ def new_books_by(author: str, since_year: int) -> list[dict]:
     return [d for d in docs if (d.get("first_publish_year") or 0) >= since_year]
 
 
+def cover_loads(url: str) -> bool:
+    """True if the address gives a real picture. A missing cover gives an error or a tiny image.
+
+    A network error is not caught: it says nothing about the cover, so the lookup is
+    tried again later instead of saving "no cover".
+    """
+    r = httpx.get(url, headers=HEADERS, timeout=10, follow_redirects=True)
+    return (
+        r.status_code == 200
+        and r.headers.get("content-type", "").startswith("image/")
+        and len(r.content) > 2000
+    )
+
+
 def english_cover(work_key: str) -> str | None:
     """The cover of an English edition of the work, or None.
 
@@ -81,9 +95,13 @@ def english_cover(work_key: str) -> str | None:
     """
     entries = _get(f"{work_key}/editions.json", {"limit": 50})["entries"]
     for e in entries:
-        langs = [lang["key"] for lang in e.get("languages", [])]
-        if "/languages/eng" in langs and e.get("covers"):
-            return COVER.format(id=e["covers"][0])
+        if "/languages/eng" not in [lang["key"] for lang in e.get("languages", [])]:
+            continue
+        for cover_id in e.get("covers", []):
+            # -1 means "no cover", and a listed number can point at a picture that is gone.
+            url = COVER.format(id=cover_id)
+            if cover_id > 0 and cover_loads(url):
+                return url
     return None
 
 

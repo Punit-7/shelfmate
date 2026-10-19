@@ -4,6 +4,7 @@ import httpx
 import streamlit as st
 
 from shelfmate.config import settings
+from shelfmate.cover_card import cover_card
 from shelfmate.logging_setup import setup_logging
 
 API = settings.api_url
@@ -56,10 +57,8 @@ def done(message: str) -> None:
 
 
 def cover(book: dict, width: int) -> None:
-    if book.get("cover_url"):
-        st.image(book["cover_url"], width=width)
-    else:
-        st.caption("No cover")
+    # A book with no cover picture gets a card with its title, so no cover is blank.
+    st.image(book.get("cover_url") or cover_card(book["title"]), width=width)
 
 
 def remove_button(book: dict) -> None:
@@ -199,7 +198,12 @@ with recs:
                         "Summary written by a local AI model from the Open Library description."
                     )
                 st.caption(book["because"])
-                st.markdown(
-                    "Find it: "
-                    + " · ".join(f"[{s['store']}]({s['url']})" for s in book["shops"])
-                )
+                if book["shops"]:
+                    st.markdown(
+                        "Find it: "
+                        + " · ".join(
+                            f"[{s['store']}]({s['url']})" for s in book["shops"]
+                        )
+                    )
+                else:
+                    st.caption("Not listed at the stores we check.")

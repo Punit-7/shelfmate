@@ -1,8 +1,10 @@
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from urllib.parse import quote_plus, urlparse
+from html import unescape
+from urllib.parse import quote_plus, unquote_plus, urlparse
 
 import httpx
 
@@ -24,11 +26,23 @@ SEARCH_PAGES = {
     "amazon.in": "https://www.amazon.in/s?k={q}",
     "flipkart.com": "https://www.flipkart.com/search?q={q}",
     "bookswagon.com": "https://www.bookswagon.com/search-books/{q}",
-    "sapnaonline.com": "https://www.sapnaonline.com/search?q={q}",
     "audible.in": "https://www.audible.in/search?keywords={q}",
 }
-NEW_STORES = ["amazon.in", "flipkart.com", "bookswagon.com", "sapnaonline.com"]
+NEW_STORES = ["amazon.in", "flipkart.com", "bookswagon.com"]
 AUDIO_STORES = ["audible.in"]
+
+# Checking that a store shows the book before we link to it.
+BROWSER = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept-Language": "en-IN,en;q=0.9",
+}
+STOCK_TTL = 24 * 3600  # a store's catalogue changes slowly
+RETRY_AFTER = 15 * 60  # a store that blocked or failed us is asked again soon
+MIN_PAGE = (
+    20_000  # a blocked request gets a page of about 2 KB, a results page is far bigger
+)
+# ponytail: in memory, lost on restart. Keep it in a table if restarts make the first page slow.
+_stock: dict[tuple[str, str, str], tuple[float, bool]] = {}
 
 
 def store_links(title: str, author: str, stores: list[str]) -> list[dict]:
@@ -36,6 +50,67 @@ def store_links(title: str, author: str, stores: list[str]) -> list[dict]:
     # The series part and a second author make worse searches, so leave them out.
     q = quote_plus(f"{title.split(' (')[0]} {author.split(',')[0]}".strip())
     return [{"store": s, "url": SEARCH_PAGES[s].format(q=q)} for s in stores]
+
+
+def shows_book(page: str, title: str, author: str) -> bool:
+    """True if a store's search page lists this book: the title and the author close together.
+
+    Every page repeats what we searched for, in its title and search box, so that text is
+    removed first. Without that, a store with no match would still look like it has one.
+    """
+    short, first = title.split(" (")[0], author.split(",")[0].strip()
+    text = words(unescape(re.sub(r"<[^>]+>", " ", unquote_plus(page))))
+    text = text.replace(words(f"{short} {first}"), " ")
+    t = re.escape(words(short))
+    if not first:
+        return re.search(rf"\b{t}\b", text) is not None
+    a = re.escape(words(first).split()[-1])
+    return (
+        re.search(rf"\b{t}\b.{{0,300}}\b{a}\b|\b{a}\b.{{0,300}}\b{t}\b", text)
+        is not None
+    )
+
+
+def in_stock(store: str, title: str, author: str) -> bool:
+    """False only when the store's search page loaded and does not show this book.
+
+    A page that fails, is blocked or is too small to be a results page means "we do not
+    know", so the link stays. Hiding a store we could not check would be worse than showing
+    a link to a page without the book.
+    """
+    key = (store, title, author)
+    hit = _stock.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    url = store_links(title, author, [store])[0]["url"]
+    try:
+        r = httpx.get(url, headers=BROWSER, timeout=10, follow_redirects=True)
+        r.raise_for_status()
+        page = r.text
+    except httpx.HTTPError as e:
+        log.info("Store not checked", extra={"store": store, "error": str(e)})
+        page = ""
+    if len(page) < MIN_PAGE:
+        ok, ttl = True, RETRY_AFTER
+    else:
+        ok, ttl = shows_book(page, title, author), STOCK_TTL
+        if not ok:
+            log.info("Not listed at %s: %s", store, title, extra={"store": store})
+    _stock[key] = (time.time() + ttl, ok)
+    return ok
+
+
+def stocked_links(books: list[tuple[str, str]], stores: list[str]) -> list[list[dict]]:
+    """store_links for each (title, author), keeping the stores that show the book.
+
+    All the checks run together, so a list of books takes about as long as one page load.
+    """
+    pairs = [(s, t, a) for t, a in books for s in stores]
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        stocked = iter(pool.map(lambda p: in_stock(*p), pairs))
+    return [
+        [link for link in store_links(t, a, stores) if next(stocked)] for t, a in books
+    ]
 
 
 def searx(query: str) -> list[dict]:

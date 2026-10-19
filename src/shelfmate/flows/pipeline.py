@@ -64,7 +64,7 @@ def email_html(results: list[dict]) -> str:
         parts.append(
             f"<h3>{html.escape(r['title'])}</h3>"
             f"<p>{html.escape(r['author'])}<br><i>{html.escape(r['because'])}</i></p>"
-            f"<p>Find it: {links}</p>"
+            f"<p>Find it: {links or 'not listed at the stores we check'}</p>"
         )
     return "\n".join(parts)
 
