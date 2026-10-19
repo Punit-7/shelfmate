@@ -1,3 +1,10 @@
+# Each container's log is capped at 3 files of 10 MB, so the disk cannot fill up.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -36,6 +43,7 @@ services:
       - models:/cache/huggingface  # the embedding model, downloaded once
     depends_on: [db, search]
     restart: unless-stopped
+    logging: *default-logging
 
   web:
     build: .
@@ -47,6 +55,7 @@ services:
     volumes: *app-volumes
     depends_on: [api]
     restart: unless-stopped
+    logging: *default-logging
 
   worker:
     build: .
@@ -56,6 +65,7 @@ services:
     volumes: *app-volumes
     depends_on: [db]
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   pgdata:

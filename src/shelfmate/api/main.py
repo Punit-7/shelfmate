@@ -7,7 +7,7 @@ from typing import Literal
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
 from shelfmate.agent.search import NEW_STORES, stocked_links
@@ -21,7 +21,14 @@ from shelfmate.logging_setup import run_id, setup_logging
 setup_logging("api")
 log = logging.getLogger(__name__)
 app = FastAPI(title="Shelfmate API")
-engine = create_engine(settings.database_url)
+engine = create_engine(settings.database_url, pool_pre_ping=True)
+
+
+@app.get("/health")
+def health():
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    return {"status": "ok"}
 
 
 @app.middleware("http")
