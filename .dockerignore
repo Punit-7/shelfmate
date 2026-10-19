@@ -1,0 +1,16 @@
+# Secrets: these must never be copied into the image.
+.env
+searxng/settings.yml
+
+.venv/
+.git/
+data/
+logs/
+mlruns/
+mlflow.db
+models/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.field-guide/
+shelfmate-guide.html

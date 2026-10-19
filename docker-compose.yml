@@ -1,3 +1,10 @@
+# Each container's log is capped at 3 files of 10 MB, so the disk cannot fill up.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -17,5 +24,54 @@ services:
     volumes:
       - ./searxng:/etc/searxng
 
+  api:
+    build: .
+    command: uvicorn shelfmate.api.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment: &in-docker
+      # .env points at localhost for running on Windows. Inside Docker, services are
+      # found by name, and Ollama runs on the Windows host.
+      DATABASE_URL: postgresql+psycopg://shelfmate:${DB_PASSWORD}@db:5432/shelfmate
+      SEARXNG_URL: http://search:8080
+      OLLAMA_URL: http://host.docker.internal:11434
+      API_URL: http://api:8000
+      HF_HOME: /cache/huggingface
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes: &app-volumes
+      - ./logs:/app/logs
+      - models:/cache/huggingface  # the embedding model, downloaded once
+    depends_on: [db, search]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  web:
+    build: .
+    command: streamlit run app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    env_file: .env
+    environment: *in-docker
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes: *app-volumes
+    depends_on: [api]
+    restart: unless-stopped
+    logging: *default-logging
+
+  worker:
+    build: .
+    command: python -m shelfmate.flows.weekly
+    env_file: .env
+    environment: *in-docker
+    volumes: *app-volumes
+    depends_on: [db]
+    restart: unless-stopped
+    logging: *default-logging
+
 volumes:
   pgdata:
+  models:
