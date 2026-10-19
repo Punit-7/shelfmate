@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_dir: str = "logs"
     email_address: str | None = None
+    # Where the recommendations go. Empty means the same address as email_address.
+    recipient_email: str | None = None
     email_app_password: SecretStr | None = None
     alert_errors_by_email: bool = False
     # Where the other services live. Inside Docker, change localhost to the service name.

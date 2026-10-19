@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.dialects.postgresql import insert
 
-from shelfmate.agent.search import AUDIO_STORES, NEW_STORES, store_links
+from shelfmate.agent.search import AUDIO_STORES, NEW_STORES, stocked_links
 from shelfmate.config import settings
 from shelfmate.db.models import Book, ShelfEntry
 from shelfmate.logging_setup import timed
@@ -201,11 +201,10 @@ def recommend_books(n: int = 5) -> list[dict]:
 
 
 def shop_links(title: str, stores: list[str]) -> list[dict]:
-    """Search links for a book on these stores, using the catalogue's title and author."""
+    """Search links for a book on the stores that show it, using the catalogue's title and author."""
     found = find_book(title)
-    if found:
-        return store_links(found.title, found.author, stores)
-    return store_links(title, "", stores)
+    book = (found.title, found.author) if found else (title, "")
+    return stocked_links([book], stores)[0]
 
 
 @tool

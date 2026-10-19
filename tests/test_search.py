@@ -1,11 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
+from shelfmate.agent import search
 from shelfmate.agent.search import (
     format_of,
+    in_stock,
     is_this_book,
     on_store,
     selling_price,
+    shows_book,
     store_links,
 )
 from shelfmate.api.main import ProgressRequest
@@ -68,3 +71,23 @@ def test_store_links_leave_out_series_and_second_author():
             "url": "https://www.flipkart.com/search?q=Golden+Son+Pierce+Brown",
         }
     ]
+
+
+def test_shows_book_ignores_the_search_echo():
+    echo = "<title>Store : The Martian Andy Weir</title><input value='The Martian Andy Weir'>"
+    other = echo + "<h2>Dune</h2><p>by Frank Herbert</p>"
+    listed = echo + "<h2>The Martian</h2><p>by Andy Weir</p>"
+    assert not shows_book(echo, "The Martian", "Andy Weir")
+    assert not shows_book(other, "The Martian", "Andy Weir")
+    assert shows_book(listed, "The Martian", "Andy Weir")
+
+
+def test_in_stock_keeps_the_link_when_the_store_blocks_us(monkeypatch):
+    class Blocked:
+        text = "robot check"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(search.httpx, "get", lambda *a, **k: Blocked())
+    assert in_stock("amazon.in", "A Blocked Test Book", "Nobody Here")
