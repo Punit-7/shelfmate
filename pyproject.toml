@@ -24,6 +24,8 @@ dependencies = [
     "sentence-transformers>=6.1.0",
     "sqlalchemy>=2.1.4",
     "streamlit>=1.66.0",
+    # Listed directly only so [tool.uv.sources] can send Linux to the CPU build.
+    "torch>=2.14.1",
     "uvicorn>=0.54.0",
 ]
 
@@ -38,3 +40,13 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.17.1",
 ]
+
+# Docker images run on Linux without a GPU. PyPI's Linux torch brings about 3 GB of
+# CUDA libraries, so Linux installs take the CPU-only build. Windows is unchanged.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
