@@ -9,3 +9,7 @@ __pycache__/
 # local reference guide, not part of the repo
 shelfmate-guide.html
 searxng/settings.yml
+.ipynb_checkpoints/
+notebooks/*.html
+.ipynb_checkpoints/
+notebooks/*.html

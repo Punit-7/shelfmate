@@ -21,16 +21,18 @@ Pass book titles to the tools exactly as the reader wrote them.
 - The reader asks about prices, deals or where to buy: call find_cheapest_prices.
 - The reader asks about audiobooks or listening: call find_audiobook.
 A message can need more than one tool; call every tool it needs.
+When the reader finished a book, call log_finished_book before recommend_books.
 Only mention books and links that a tool returned. Never invent titles or prices.
 The tools return search links, not prices: tell the reader to open a store's
 link to see its current price."""
 
-# A stalled Ollama server would otherwise block a chat turn forever.
+# A stalled Ollama server would otherwise block a chat turn forever. The timeout is longer than
+# the first answer takes on a CPU-only PC (120 seconds was not enough), same as summaries.py.
 llm = ChatOllama(
     model=settings.llm_model,
     base_url=settings.ollama_url,
     temperature=0,
-    client_kwargs={"timeout": 120},
+    client_kwargs={"timeout": 300},
 )
 agent = create_react_agent(
     llm,
@@ -40,7 +42,9 @@ agent = create_react_agent(
 
 
 # Each tool round trip is two steps, so 10 allows about four tool calls per question.
-LIMITS = {"recursion_limit": 10}
+# The model asks for several tools in one step, and LangGraph runs them at the same time by
+# default. One at a time, in order, so recommend_books sees the book log_finished_book saved.
+LIMITS = {"recursion_limit": 10, "max_concurrency": 1}
 
 
 def tools_called(result: dict) -> list[str]:
