@@ -11,3 +11,5 @@ shelfmate-guide.html
 searxng/settings.yml
 .ipynb_checkpoints/
 notebooks/*.html
+.ipynb_checkpoints/
+notebooks/*.html

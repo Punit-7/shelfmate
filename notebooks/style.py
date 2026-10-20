@@ -251,7 +251,11 @@ def show(df, caption=None, n=10, formats=None):
                 },
                 {
                     "selector": "caption",
-                    "props": f"caption-side:top;text-align:left;color:{INK};font-size:15px;font-weight:700;padding:10px 4px",
+                    "props": f"caption-side:top;text-align:left;color:{INK};background:{SURFACE};font-size:15px;font-weight:700;padding:10px 14px",
+                },
+                {
+                    "selector": "tr",
+                    "props": f"background:{SURFACE} !important",
                 },
                 {
                     "selector": "th",
@@ -259,7 +263,7 @@ def show(df, caption=None, n=10, formats=None):
                 },
                 {
                     "selector": "td",
-                    "props": f"padding:7px 14px;border-bottom:1px solid {GRID}",
+                    "props": f"padding:7px 14px;border-bottom:1px solid {GRID};color:{INK} !important;background:{SURFACE} !important;text-align:left",
                 },
             ]
         )
