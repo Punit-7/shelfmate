@@ -14,8 +14,8 @@ from shelfmate.agent.search import NEW_STORES, stocked_links
 from shelfmate.config import settings
 from shelfmate.data.import_goodreads import import_goodreads
 from shelfmate.data.openlibrary import search_books
-from shelfmate.db.models import Book, Recommendation, ShelfEntry
-from shelfmate.flows.pipeline import after_finished_book, ensure_cover
+from shelfmate.db.models import Book, PipelineRun, Rating, Recommendation, ShelfEntry
+from shelfmate.flows.pipeline import ensure_cover
 from shelfmate.logging_setup import run_id, setup_logging
 
 setup_logging("api")
@@ -240,14 +240,58 @@ def finish_book(book_id: int, req: FinishRequest, background: BackgroundTasks):
     )
     background.add_task(ensure_cover, book_id)
     log.info("Book finished", extra={"book_id": book_id, "rating": req.rating})
-    background.add_task(after_finished_book)
-    log.debug("Recommendation flow queued", extra={"book_id": book_id})
+    # The worker runs the flow. The row is there before this returns, so the website
+    # sees the run as busy on its very next look.
+    with Session(engine) as session, session.begin():
+        session.add(PipelineRun())
+    log.debug("Recommendation run requested", extra={"book_id": book_id})
     return {"status": "saved", "book_id": book_id, "rating": req.rating}
 
 
+def pipeline_busy() -> str | None:
+    """What the worker is doing for the website: "recommendations", "summaries" or None."""
+    with Session(engine) as session:
+        states = set(
+            session.scalars(
+                select(PipelineRun.status).where(
+                    PipelineRun.status.in_(["queued", "running", "summaries"])
+                )
+            )
+        )
+    if states & {"queued", "running"}:
+        return "recommendations"
+    return "summaries" if states else None
+
+
+def page_lanes(books: list[dict], offset: int, limit: int, lane: str | None):
+    """Splits ranked books into their lanes and cuts one page out of each.
+
+    lane limits the page to one lane. total is how many books each lane holds, so the
+    website knows when there is nothing more to show.
+    """
+    lanes: dict[str, list] = {"continue": [], "new": []}
+    for b in books:
+        lanes[b["lane"]].append(b)
+    total = {name: len(items) for name, items in lanes.items()}
+    page = {
+        name: items[offset : offset + limit] if lane in (None, name) else []
+        for name, items in lanes.items()
+    }
+    return page, total
+
+
 @app.get("/recommendations")
-def list_recommendations(background: BackgroundTasks):
-    """Both lanes from the last pipeline run, with summaries, reasons and store links."""
+def list_recommendations(
+    background: BackgroundTasks,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(5, ge=1, le=20),
+    lane: Literal["continue", "new"] | None = None,
+):
+    """Both lanes from the last pipeline run, with summaries, reasons and store links.
+
+    Each lane returns one page of `limit` books starting at `offset`. Ask for the next
+    page with offset=5, and `total` says when a lane has no more.
+    """
     with Session(engine) as session:
         books = [
             dict(row)
@@ -266,13 +310,17 @@ def list_recommendations(background: BackgroundTasks):
                 .order_by(Recommendation.rank)
             ).mappings()
         ]
-    lanes: dict[str, list] = {"continue": [], "new": []}
-    shops = stocked_links([(b["title"], b["author"]) for b in books], NEW_STORES)
-    for b, links in zip(books, shops):
+    page, total = page_lanes(books, offset, limit, lane)
+    # Store links are looked up for this page only, so a page takes about as long as one search.
+    shown = [b for items in page.values() for b in items]
+    shops = stocked_links([(b["title"], b["author"]) for b in shown], NEW_STORES)
+    for b, links in zip(shown, shops):
         if b["cover_url"] is None:
             background.add_task(ensure_cover, b["book_id"])
-        lanes[b.pop("lane")].append({**b, "shops": links})
-    return lanes
+        b["shops"] = links
+        del b["lane"]
+    # busy tells the website to look again: new picks coming, or summaries being written.
+    return {**page, "total": total, "busy": pipeline_busy()}
 
 
 @app.get("/search")
@@ -293,3 +341,54 @@ def import_goodreads_export(file: UploadFile):
         return import_goodreads(file.file, engine)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/stats")
+def stats():
+    """Counts for the dashboard: books per shelf, your ratings, the catalogue size and your last five finished books."""
+    with Session(engine) as session:
+        shelves = dict(
+            session.execute(
+                select(ShelfEntry.shelf, func.count()).group_by(ShelfEntry.shelf)
+            ).all()
+        )
+        ratings = dict(
+            session.execute(
+                select(ShelfEntry.rating, func.count())
+                .where(ShelfEntry.shelf == "read", ShelfEntry.rating > 0)
+                .group_by(ShelfEntry.rating)
+            ).all()
+        )
+        catalogue = session.scalar(select(func.count()).select_from(Book))
+        recent = [
+            dict(row)
+            for row in session.execute(
+                select(
+                    Book.id.label("book_id"),
+                    Book.title,
+                    Book.cover_url,
+                    ShelfEntry.rating,
+                )
+                .join(Book, Book.id == ShelfEntry.book_id)
+                .where(ShelfEntry.shelf == "read")
+                .order_by(ShelfEntry.finished_at.desc())
+                .limit(5)
+            ).mappings()
+        ]
+        # One query for all five books, so the ratings table is read once.
+        community = dict(
+            session.execute(
+                select(Rating.book_id, func.avg(Rating.rating))
+                .where(Rating.book_id.in_([b["book_id"] for b in recent]))
+                .group_by(Rating.book_id)
+            ).all()
+        )
+    for b in recent:
+        avg = community.get(b["book_id"])
+        b["community"] = round(float(avg), 2) if avg is not None else None
+    return {
+        "shelves": shelves,
+        "ratings": ratings,
+        "catalogue": catalogue,
+        "recent": recent,
+    }

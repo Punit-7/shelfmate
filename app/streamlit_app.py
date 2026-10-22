@@ -179,7 +179,7 @@ with want:
 
 with recs:
     data = call_api("GET", "/recommendations") or {}
-    if not any(data.values()):
+    if not (data.get("continue") or data.get("new")):
         st.caption("Finish a book to get recommendations.")
     for lane, label in [("continue", "Continue your series"), ("new", "Something new")]:
         if not data.get(lane):
