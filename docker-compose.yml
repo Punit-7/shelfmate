@@ -36,6 +36,8 @@ services:
       OLLAMA_URL: http://host.docker.internal:11434
       API_URL: http://api:8000
       HF_HOME: /cache/huggingface
+      # Prefect starts a temporary server for each flow run. In a container it needs longer than the default 30 seconds.
+      PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS: "300"
     ports:
       - "127.0.0.1:8000:8000"
     volumes: &app-volumes
@@ -45,7 +47,7 @@ services:
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
-      timeout: 5s
+      timeout: 20s
       retries: 3
     restart: unless-stopped
     logging: *default-logging
@@ -62,6 +64,16 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  runner:
+    build: .
+    command: python -m shelfmate.flows.runner  # runs the recommendation flow when the API asks
+    env_file: .env
+    environment: *in-docker
+    volumes: *app-volumes
+    depends_on: [db]
+    restart: unless-stopped
+    logging: *default-logging
+
   worker:
     build: .
     command: python -m shelfmate.flows.weekly
@@ -70,6 +82,20 @@ services:
     volumes: *app-volumes
     depends_on: [db]
     restart: unless-stopped
+    logging: *default-logging
+
+  site:
+    build: ./site
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "127.0.0.1:3000:3000"  # local only, like the other services
+    depends_on: [api]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     logging: *default-logging
 
 volumes:

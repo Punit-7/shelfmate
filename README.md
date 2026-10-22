@@ -33,7 +33,7 @@ Summaries are checked against the book description; `scripts/summary_report.py` 
 | Part | Tool |
 |------|------|
 | API | FastAPI, uvicorn |
-| Website | Streamlit |
+| Website | Streamlit (first version) and Next.js in `site/` (port 3000) |
 | Database | Postgres + pgvector, SQLAlchemy, Alembic |
 | Recommender | implicit (ALS), sentence-transformers (embeddings) |
 | Agent and LLM | LangGraph, Ollama |
@@ -64,7 +64,9 @@ uv run python -m shelfmate.recommender.embed_books
 docker compose up -d --build
 ```
 
-Website: http://localhost:8501 · API docs: http://localhost:8000/docs · `docker compose ps` shows the API as healthy.
+Streamlit website: http://localhost:8501 · Next.js site: http://localhost:3000 · API docs: http://localhost:8000/docs · `docker compose ps` shows the API and site as healthy.
+
+Browser tests for the Next.js site (they change real data and put it back): `cd site && PW_CHANNEL=msedge npm run test:e2e`, with the stack running. Without Edge, run `npx playwright install chromium` once and leave `PW_CHANNEL` unset.
 Logs are JSON in `logs/`; `uv run python scripts/log_report.py` summarises them.
 
 ## Limits and next steps
@@ -72,4 +74,4 @@ Logs are JSON in `logs/`; `uv run python scripts/log_report.py` summarises them.
 - Price coverage is low: shops block automated search, so the app shows store links, not prices.
 - The dataset (goodbooks-10k) stops around 2017.
 - ALS retrains on every start (about a minute).
-- Next.js website is planned.
+- The Next.js site (`site/`) has the shelves, recommendations, add-book and dashboard pages. Streamlit is still the first version and will be removed once the Next.js site covers everything.

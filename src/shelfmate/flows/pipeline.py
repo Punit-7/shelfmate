@@ -16,6 +16,9 @@ from shelfmate.recommender.summaries import get_summary
 
 log = logging.getLogger(__name__)
 
+SHOWN = 5  # new books that get a summary and go in the email
+STORED = 20  # new books kept, so the website's "Show more" has more to show
+
 
 @task(retries=3, retry_delay_seconds=[10, 20, 40])
 def get_recommendations(n: int = 5) -> list[dict]:
@@ -70,11 +73,11 @@ def email_html(results: list[dict]) -> str:
 
 
 @task
-def save_and_email(results: list[dict]) -> None:
-    """Replaces the Recommendations shelf, then emails the list."""
+def save_and_email(results: list[dict], extra: list[dict] = ()) -> None:
+    """Replaces the Recommendations shelf, then emails results. extra is saved but not emailed."""
     with Session(engine) as session, session.begin():
         session.execute(delete(Recommendation))
-        for rank, r in enumerate(results):
+        for rank, r in enumerate([*results, *extra]):
             session.add(
                 Recommendation(
                     book_id=r["book_id"],
@@ -91,16 +94,22 @@ def save_and_email(results: list[dict]) -> None:
 
 
 @flow(name="after-finished-book")
-def after_finished_book():
+def after_finished_book() -> None:
+    """Saves new recommendations. The runner writes the missing summaries afterwards."""
     new_run("flow")
     log.info("Pipeline started")
     with timed(log, "after-finished-book flow"):
-        books = get_recommendations()
+        books = get_recommendations(STORED)
         if not books:
             log.warning("No recommendations, nothing to price or email")
             return
-        for b in books:
+        # Every continue book and the first SHOWN new ones get the full treatment. The rest
+        # are saved with just their reason, and the website fills in links when they are shown.
+        new = [b for b in books if b["lane"] == "new"]
+        shown = [b for b in books if b["lane"] != "new"] + new[:SHOWN]
+        for b in shown:
             fill_details(b["book_id"])
-        results = [{**b, "shops": shop_links(b["title"], NEW_STORES)} for b in books]
-        save_and_email(results)
+        results = [{**b, "shops": shop_links(b["title"], NEW_STORES)} for b in shown]
+        extra = new[SHOWN:]
+        save_and_email(results, extra)
     log.info("Sent %d recommendations", len(results), extra={"books": len(results)})

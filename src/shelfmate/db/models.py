@@ -97,3 +97,16 @@ class Recommendation(Base):
     rank: Mapped[int]
     because: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class PipelineRun(Base):
+    """A request to rebuild the recommendations. The API adds one, the worker runs it."""
+
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # queued, running, summaries (picks saved, writing summaries), done or failed
+    status: Mapped[str] = mapped_column(default="queued")
+    requested_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    started_at: Mapped[datetime | None]
+    finished_at: Mapped[datetime | None]
