@@ -1,6 +1,8 @@
 import html
 import logging
-from datetime import date
+import time
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 from prefect import flow, task
@@ -69,6 +71,33 @@ def weekly_refresh():
     log.info("Weekly refresh finished")
 
 
+WHEN = ZoneInfo(
+    "Asia/Kolkata"
+)  # the weekly run is at 9am in India, not in the container's UTC
+SUNDAY = 6  # datetime.weekday(): Monday is 0
+
+
+def next_sunday_nine(now: datetime) -> datetime:
+    """The next Sunday at 9am after now. On a Sunday before 9am, that is today."""
+    days = (SUNDAY - now.weekday()) % 7
+    run = (now + timedelta(days=days)).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    )
+    return run if run > now else run + timedelta(days=7)
+
+
+def run_every_sunday() -> None:
+    """Sleeps until the next Sunday at 9am, runs the refresh, and repeats. A failed run is logged and the loop goes on."""
+    while True:
+        run_at = next_sunday_nine(datetime.now(WHEN))
+        log.info("Next weekly refresh", extra={"at": run_at.isoformat()})
+        time.sleep((run_at - datetime.now(WHEN)).total_seconds())
+        try:
+            weekly_refresh()
+        except Exception:
+            log.exception("Weekly refresh failed, trying again next Sunday")
+
+
 if __name__ == "__main__":
     setup_logging("worker")
-    weekly_refresh.serve(name="sunday-9am", cron="0 9 * * 0")
+    run_every_sunday()

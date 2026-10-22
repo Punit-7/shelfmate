@@ -52,18 +52,6 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  web:
-    build: .
-    command: streamlit run app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
-    env_file: .env
-    environment: *in-docker
-    ports:
-      - "127.0.0.1:8501:8501"
-    volumes: *app-volumes
-    depends_on: [api]
-    restart: unless-stopped
-    logging: *default-logging
-
   runner:
     build: .
     command: python -m shelfmate.flows.runner  # runs the recommendation flow when the API asks

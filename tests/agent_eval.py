@@ -8,8 +8,9 @@ from shelfmate.db.models import ShelfEntry
 CASES = [
     {"ask": "What should I read next?", "tools": ["recommend_books"]},
     {"ask": "Recommend me 3 books", "tools": ["recommend_books"]},
-    {"ask": "Suggest something like Red Rising", "tools": ["recommend_books"]},
-    {"ask": "I need a new fantasy series, any ideas?", "tools": ["recommend_books"]},
+    {"ask": "Suggest something like Red Rising", "tools": ["recommend_like"]},
+    {"ask": "I need a new fantasy series, any ideas?", "tools": ["recommend_like"]},
+    {"ask": "Books like the Empire of the Vampire series", "tools": ["recommend_like"]},
     {"ask": "Give me 10 recommendations", "tools": ["recommend_books"]},
     {"ask": "What would you pick for me this weekend?", "tools": ["recommend_books"]},
     {"ask": "Anything good I haven't read yet?", "tools": ["recommend_books"]},

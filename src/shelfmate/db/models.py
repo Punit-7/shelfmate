@@ -51,6 +51,8 @@ class Rating(Base):
     """One reader's rating of one book. A reader can rate a book only once."""
 
     __tablename__ = "ratings"
+    # Looking up the ratings of one book would otherwise read every row of the table.
+    __table_args__ = (Index("ratings_book_id_idx", "book_id"),)
 
     # BigInteger matches the columns pandas created when the ratings were loaded.
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -110,3 +112,12 @@ class PipelineRun(Base):
     requested_at: Mapped[datetime] = mapped_column(server_default=func.now())
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
+
+
+class DismissedBook(Base):
+    """A book you marked "not interested". It is hidden now and never recommended again."""
+
+    __tablename__ = "dismissed_books"
+
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), primary_key=True)
+    dismissed_at: Mapped[datetime] = mapped_column(server_default=func.now())

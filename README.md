@@ -64,7 +64,36 @@ uv run python -m shelfmate.recommender.embed_books
 docker compose up -d --build
 ```
 
-Streamlit website: http://localhost:8501 · Next.js site: http://localhost:3000 · API docs: http://localhost:8000/docs · `docker compose ps` shows the API and site as healthy.
+Website: http://localhost:3000 · API docs: http://localhost:8000/docs · `docker compose ps` shows the API and site as healthy. The first website, in Streamlit, is in `app/` for reference and no longer runs.
+
+### Run the API and the website
+
+Docker (the API image contains a copy of `src/`, so rebuild after code changes):
+
+```powershell
+docker compose up -d --build api site
+```
+
+Local development (no rebuild; the API reloads when you save):
+
+```powershell
+docker compose up -d db search                                  # database and search only
+uv run uvicorn shelfmate.api.main:app --reload --port 8000      # terminal 1: the API
+cd site; npm install; npm run dev                               # terminal 2: the website on port 3000
+```
+
+The API loads the agent once at startup. If the agent still gives an old answer after you change `src/shelfmate/agent/`, restart the API. The website finds the API at `http://127.0.0.1:8000` unless `API_URL` says otherwise.
+
+### Ask the agent
+
+The "Ask Shelfmate" box on the Recommendations page answers in plain English. It can:
+- recommend next books from your shelves ("what should I read next?")
+- find books like a book, series or genre ("something like Dune")
+- list an author's books ("r.f. kuang's books"). It uses the local catalogue first and Open Library when the author is not there
+- find store links and audiobook links
+- log a finished book with a rating ("I finished Golden Son, 5 stars")
+
+It only names books and links that a tool returned. Ollama must be running on the host.
 
 Browser tests for the Next.js site (they change real data and put it back): `cd site && PW_CHANNEL=msedge npm run test:e2e`, with the stack running. Without Edge, run `npx playwright install chromium` once and leave `PW_CHANNEL` unset.
 Logs are JSON in `logs/`; `uv run python scripts/log_report.py` summarises them.

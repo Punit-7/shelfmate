@@ -10,10 +10,16 @@
   --color-accent: #6f9fb0;
 }
 
+/* Dark scrollbars and dark native controls (dropdowns, number boxes). */
+html {
+  color-scheme: dark;
+}
+
 body {
   background: var(--color-page);
   color: var(--color-ink);
 }
+
 /* Keyboard focus must stay visible on the dark background. */
 :focus-visible {
   outline: 2px solid var(--color-accent);

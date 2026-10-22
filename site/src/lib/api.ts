@@ -23,6 +23,7 @@ export type LaneName = "continue" | "new";
 // busy says what the API is doing in the background, so the page knows to look again.
 export type Lanes = Record<LaneName, Recommendation[]> & {
   total: Record<LaneName, number>;
+  genres: string[]; // the genres in the recommendations, the most common first
   busy: "recommendations" | "summaries" | null;
 };
 

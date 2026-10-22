@@ -1,7 +1,9 @@
 import functools
 import logging
+import re
 from datetime import datetime
 
+import httpx
 import numpy as np
 import pandas as pd
 from langchain_core.tools import tool
@@ -10,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from shelfmate.agent.search import AUDIO_STORES, NEW_STORES, stocked_links
 from shelfmate.config import settings
+from shelfmate.data.openlibrary import works_by_author
 from shelfmate.db.models import Book, ShelfEntry
 from shelfmate.logging_setup import timed
 from shelfmate.recommender.collaborative import build_matrix, recommend_for_me, train
@@ -140,8 +143,15 @@ def recommend(n: int = 5) -> list[dict]:
     """
     shelf = pd.read_sql("SELECT book_id, shelf, rating FROM my_shelf", engine)
     on_shelf = set(shelf["book_id"])  # every shelf, so you never get a book you own
+    # Books marked "not interested" are left out too, the same way.
+    on_shelf |= set(
+        pd.read_sql("SELECT book_id FROM dismissed_books", engine)["book_id"]
+    )
     read = shelf[shelf["shelf"] == "read"]
+    reading = shelf[shelf["shelf"] == "currently-reading"]
     liked = read.loc[read["rating"] >= 4, "book_id"].tolist()
+    # A book you are reading shows what you like right now, so it counts as liked until you rate it.
+    liked += [b for b in reading["book_id"] if b not in liked]
     if not liked:
         return popular_books(on_shelf, n)
 
@@ -157,7 +167,9 @@ def recommend(n: int = 5) -> list[dict]:
     ranked = hybrid(cf, content_scores(liked), n_rated=rated, n=CANDIDATES)
     ranked = [(b, s) for b, s in ranked if b in books.index and b not in on_shelf]
 
-    read = read.join(books, on="book_id")
+    # Series you are reading count as started too, so their next book is offered. Rating 3 is
+    # the bar next_in_series uses, so an unrated book in progress passes it.
+    read = pd.concat([read, reading.assign(rating=3)]).join(books, on="book_id")
     first_book = (
         books.dropna(subset=["series_name"])
         .sort_values("series_pos")
@@ -193,11 +205,180 @@ def recommend(n: int = 5) -> list[dict]:
     return picks
 
 
+def with_details(picks: list[dict]) -> list[dict]:
+    """Adds each book's real author and summary, so the model has nothing to invent."""
+    ids = [p["book_id"] for p in picks]
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT id, author, summary FROM books WHERE id = ANY(:ids)"),
+            {"ids": ids},
+        ).all()
+    info = {r.id: (r.author, r.summary) for r in rows}
+    return [
+        {**p, "author": info[p["book_id"]][0], "summary": info[p["book_id"]][1]}
+        for p in picks
+    ]
+
+
 @tool
 @log_tool
 def recommend_books(n: int = 5) -> list[dict]:
-    """Return the top n hybrid recommendations for the user, with book_id and title."""
-    return recommend(n)
+    """The reader's own recommendations, built from the books on their shelves. Use this when
+    they ask what to read next without naming a book, series, author or kind of story."""
+    return with_details(recommend(n))
+
+
+def hidden_ids() -> list[int]:
+    """Books on any shelf or marked not interested. They are never recommended."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT book_id FROM my_shelf UNION SELECT book_id FROM dismissed_books"
+            )
+        ).all()
+    return [r[0] for r in rows] or [0]  # ANY(empty list) would match nothing useful
+
+
+def find_seed(about: str):
+    """The catalogue book the reader means: the exact title, or a title that starts with
+    their words ("Ender" finds "Ender's Game"). A word inside a title does not count."""
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT id, title, author FROM books "
+                "WHERE lower(split_part(title, ' (', 1)) = lower(:t) "
+                r"OR title ~* ('^' || :pattern || '(\W|$)') "
+                "ORDER BY lower(split_part(title, ' (', 1)) = lower(:t) DESC, length(title) "
+                "LIMIT 1"
+            ),
+            {"t": about.strip(), "pattern": re.escape(about.strip())},
+        ).first()
+
+
+def readers_also_liked(
+    seed_id: int, short: str, hidden: list[int], n: int
+) -> list[int]:
+    """Book ids that readers of the seed also liked, from the collaborative model.
+
+    The seed itself, its own series, and anything on your shelves are left out, because the
+    reader asked for something new like it.
+    """
+    model, n_books = als_model()
+    if (
+        seed_id >= n_books
+    ):  # added after the ratings were collected, so ALS has never seen it
+        return []
+    ids, _ = model.similar_items(seed_id, N=80)
+    books = catalogue()
+    out = []
+    for i in (int(x) for x in ids):
+        if i == seed_id or i in hidden or i not in books.index:
+            continue
+        if short.lower() in books.loc[i, "title"].lower():
+            continue  # a title that contains the seed's is the same series
+        out.append(i)
+        if len(out) == n:
+            break
+    return out
+
+
+@tool
+@log_tool
+def recommend_like(about: str, n: int = 5) -> list[dict]:
+    """Books like something the reader named: a book, a series, an author or a kind of story
+    ("dark fantasy with vampires"). Pass their words as `about`. Use this whenever the reader
+    names something to be similar to."""
+    n = max(1, min(n, 10))
+    hidden = hidden_ids()
+    seed = find_seed(about)
+    ids: list[int] = []
+    if seed is not None:
+        ids = readers_also_liked(seed.id, short_title(seed.title), hidden, n)
+        because = f"Readers who liked {short_title(seed.title)} also liked these"
+        note = None
+    if not ids:
+        # Not a book we have ratings for, so match the reader's own words by genre and title.
+        from shelfmate.recommender.content import embed
+
+        vector = embed([about])[0].tolist()
+        with engine.connect() as conn:
+            ids = [
+                r[0]
+                for r in conn.execute(
+                    text(
+                        "SELECT id FROM books WHERE embedding IS NOT NULL AND id <> ALL(:hidden) "
+                        "ORDER BY embedding <=> CAST(:v AS vector) LIMIT :n"
+                    ),
+                    {"v": str(vector), "hidden": hidden, "n": n},
+                )
+            ]
+        because = f"Matches your words “{about}” by genre and title"
+        note = (
+            f"“{about}” is not a book the catalogue has ratings for, so these are matched "
+            "only by genre and title words. Say so, and do not claim they are similar in story."
+        )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT id, title, author, summary FROM books WHERE id = ANY(:ids)"),
+            {"ids": ids or [0]},
+        ).all()
+    info = {r.id: r for r in rows}
+    picks = [
+        {
+            "book_id": i,
+            "title": info[i].title,
+            "author": info[i].author,
+            "summary": info[i].summary,
+            "because": because,
+        }
+        for i in ids
+        if i in info
+    ]
+    if note:
+        for p in picks:
+            p["note"] = note
+    return picks
+
+
+@tool
+@log_tool
+def books_by_author(author: str) -> list[dict]:
+    """Every catalogue book by an author, in series order. Pass only the author's name, such as
+    "R.F. Kuang", without words like "books" or "'s"."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT id, title, author, summary FROM books WHERE author ILIKE '%' || :a || '%' "
+                "ORDER BY series_name NULLS LAST, series_pos NULLS LAST, title LIMIT 20"
+            ),
+            {"a": author.strip()},
+        ).all()
+    if rows:
+        return [
+            {
+                "book_id": r.id,
+                "title": r.title,
+                "author": r.author,
+                "summary": r.summary,
+                "because": f"By {r.author}",
+            }
+            for r in rows
+        ]
+    # Not in the catalogue: list them from Open Library, the same source as the Add page.
+    try:
+        found = works_by_author(author.strip())
+    except httpx.HTTPError:
+        return []
+    return [
+        {
+            "title": w["title"],
+            "author": w["author"],
+            "year": w["year"],
+            "because": f"By {w['author']}",
+            "note": "From Open Library, not in the reader's catalogue yet. They can add it on the Add a book page.",
+        }
+        for w in found
+    ]
 
 
 def shop_links(title: str, stores: list[str]) -> list[dict]:

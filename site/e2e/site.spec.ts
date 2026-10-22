@@ -73,7 +73,8 @@ test("remove asks first, and cancelling keeps the book", async ({ page }) => {
 test("read shelf shows stars and no progress or Finished buttons", async ({ page }) => {
   await page.goto("/shelves?name=read");
   await expect(page.getByRole("button", { name: "Finished" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+  // "Save" is the progress button. "Save rating" is allowed here, so match the name exactly.
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
 });
 
 test("dashboard shows tiles, recent books and health", async ({ page }) => {
@@ -123,4 +124,70 @@ test("a cut-off summary can be opened and closed", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Show less" }).first()).toBeVisible();
   await page.getByRole("button", { name: "Show less" }).first().click();
   await expect(page.getByRole("button", { name: "Show less" })).toHaveCount(0);
+});
+
+test("not interested hides a card, and undo brings it back", async ({ page }) => {
+  await page.goto("/", { waitUntil: "networkidle" });
+  const cards = page.getByTestId("book-card");
+  const before = await cards.count();
+  test.skip(before === 0, "no recommendations to hide");
+  await page.getByRole("button", { name: "Not interested" }).first().click();
+  const hidden = page.getByTestId("book-card-hidden");
+  await expect(hidden).toHaveCount(1);
+  await expect(cards).toHaveCount(before - 1);
+  // Undo, so the test leaves the recommendations as it found them.
+  await hidden.getByRole("button", { name: "Undo" }).click();
+  await expect(hidden).toHaveCount(0);
+  await expect(cards).toHaveCount(before);
+});
+
+test("a genre chip narrows the list and All brings it back", async ({ page }) => {
+  await page.goto("/", { waitUntil: "networkidle" });
+  const chips = page.getByRole("navigation", { name: "Filter by genre" }).getByRole("link");
+  test.skip((await chips.count()) < 2, "no genres to filter by");
+  const genre = chips.nth(1);
+  await genre.click();
+  await expect(page).toHaveURL(/genre=/);
+  await expect(genre).toHaveAttribute("aria-current", "true");
+  await page.getByRole("navigation", { name: "Filter by genre" }).getByRole("link", { name: "All" }).click();
+  await expect(page).not.toHaveURL(/genre=/);
+});
+
+test("shelf search narrows the list and clear brings it back", async ({ page }) => {
+  await page.goto("/shelves?name=currently-reading", { waitUntil: "networkidle" });
+  const search = page.getByLabel("Search this shelf");
+  test.skip((await search.count()) === 0, "the search box shows once a shelf has two books");
+  await search.fill("zqxjvkwpl");
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByText("No book matches")).toBeVisible();
+  await page.getByRole("link", { name: "Clear the search" }).click();
+  await expect(page.getByText("No book matches")).toHaveCount(0);
+});
+
+test("shelf sort offers four orders and keeps the choice", async ({ page }) => {
+  await page.goto("/shelves?name=read&sort=title", { waitUntil: "networkidle" });
+  const sort = page.getByLabel("Sort this shelf");
+  test.skip((await sort.count()) === 0, "the sort box shows once a shelf has two books");
+  await expect(sort.locator("option")).toHaveCount(4);
+  await expect(sort).toHaveValue("title");
+});
+
+test("dashboard shows books finished per month", async ({ page }) => {
+  await page.goto("/dashboard", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: "Books finished per month" })).toBeVisible();
+});
+
+test("a finished book's rating can be changed and put back", async ({ page }) => {
+  await page.goto("/shelves?name=read", { waitUntil: "networkidle" });
+  const rating = page.getByLabel(/^Rating for/).first();
+  test.skip((await rating.count()) === 0, "no finished book on the read shelf");
+  const original = await rating.inputValue();
+  const other = original === "3" ? "2" : "3";
+  await rating.selectOption(other);
+  await page.getByRole("button", { name: "Save rating" }).first().click();
+  await expect(page.getByLabel(/^Rating for/).first()).toHaveValue(other);
+  // Put it back. This also asks the worker to rebuild the recommendations twice.
+  await page.getByLabel(/^Rating for/).first().selectOption(original);
+  await page.getByRole("button", { name: "Save rating" }).first().click();
+  await expect(page.getByLabel(/^Rating for/).first()).toHaveValue(original);
 });

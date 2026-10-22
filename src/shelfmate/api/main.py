@@ -1,7 +1,11 @@
 import logging
 import re
+import threading
 import time
 import uuid
+from collections import Counter
+from contextlib import asynccontextmanager
+from datetime import date
 from typing import Literal
 
 import httpx
@@ -14,13 +18,47 @@ from shelfmate.agent.search import NEW_STORES, stocked_links
 from shelfmate.config import settings
 from shelfmate.data.import_goodreads import import_goodreads
 from shelfmate.data.openlibrary import search_books
-from shelfmate.db.models import Book, PipelineRun, Rating, Recommendation, ShelfEntry
+from shelfmate.db.models import (
+    Book,
+    DismissedBook,
+    PipelineRun,
+    Rating,
+    Recommendation,
+    ShelfEntry,
+)
 from shelfmate.flows.pipeline import ensure_cover
 from shelfmate.logging_setup import run_id, setup_logging
 
 setup_logging("api")
 log = logging.getLogger(__name__)
-app = FastAPI(title="Shelfmate API")
+
+
+def warm_store_links(top: int = 25) -> None:
+    """Checks the stores for the best recommendations, so the first page opens fast.
+
+    The checks are remembered for a day, but only in this process, so a restart forgets them.
+    """
+    try:
+        with Session(engine) as session:
+            rows = session.execute(
+                select(Book.title, Book.author)
+                .join(Recommendation, Recommendation.book_id == Book.id)
+                .order_by(Recommendation.rank)
+                .limit(top)
+            ).all()
+        stocked_links([(t, a) for t, a in rows], NEW_STORES)
+        log.info("Store links warmed", extra={"books": len(rows)})
+    except Exception:
+        log.warning("Could not warm the store links", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    threading.Thread(target=warm_store_links, name="warm-links", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Shelfmate API", lifespan=lifespan)
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 
 
@@ -131,6 +169,11 @@ def list_shelf(
     return books
 
 
+# The recommender learns from these two shelves. A book moving in or out of them changes your
+# recommendations, so the worker is asked to rebuild them.
+TASTE_SHELVES = {"read", "currently-reading"}
+
+
 def put_on_shelf(book_id: int, shelf: str, source: str = "api", **fields) -> None:
     """Creates or updates a book's shelf entry. 404s if the book is unknown."""
     with Session(engine) as session:
@@ -139,10 +182,13 @@ def put_on_shelf(book_id: int, shelf: str, source: str = "api", **fields) -> Non
         entry = session.get(ShelfEntry, book_id) or ShelfEntry(
             book_id=book_id, source=source
         )
+        before = entry.shelf
         entry.shelf = shelf
         for key, value in fields.items():
             setattr(entry, key, value)
         session.add(entry)
+        if before != shelf and {before, shelf} & TASTE_SHELVES:
+            session.add(PipelineRun())
         session.commit()
 
 
@@ -208,6 +254,8 @@ def remove_book(book_id: int):
             raise HTTPException(
                 status_code=404, detail=f"Book {book_id} is not shelved"
             )
+        if entry.shelf in TASTE_SHELVES:
+            session.add(PipelineRun())
         session.delete(entry)
         session.commit()
     log.info("Book removed", extra={"book_id": book_id})
@@ -228,6 +276,84 @@ def want_book(book_id: int, background: BackgroundTasks):
     background.add_task(ensure_cover, book_id)
     log.info("Book wanted", extra={"book_id": book_id})
     return {"status": "saved", "book_id": book_id}
+
+
+@app.patch("/shelf/{book_id}/rating")
+def update_rating(book_id: int, req: FinishRequest):
+    """Changes the rating of a book you have finished. The recommendations are rebuilt."""
+    with Session(engine) as session, session.begin():
+        entry = session.get(ShelfEntry, book_id)
+        if entry is None or entry.shelf != "read":
+            raise HTTPException(
+                status_code=404, detail=f"Book {book_id} is not on your read shelf"
+            )
+        entry.rating = req.rating
+        session.add(PipelineRun())  # your taste changed, so ask the worker to rebuild
+    log.info("Rating changed", extra={"book_id": book_id, "rating": req.rating})
+    return {"status": "saved", "book_id": book_id, "rating": req.rating}
+
+
+class AskRequest(BaseModel):
+    message: str = Field(min_length=2, max_length=500)
+
+
+# The local model answers one question at a time. A second question waits for a 429, not a queue.
+chat_lock = threading.Lock()
+
+
+ask_jobs: dict[str, dict] = {}  # job id -> {"status": ..., and the answer once done}
+
+
+def run_ask(job_id: str, message: str) -> None:
+    """Answers one question in the background. The website polls for the result."""
+    from shelfmate.agent.graph import ask, strip_unlisted_links, tools_called
+
+    try:
+        result = ask(message)
+        tools = tools_called(result)
+        answer = strip_unlisted_links(result["messages"][-1].content, result)
+        if "log_finished_book" in tools:
+            # The agent saved a finished book itself, so the recommendations need rebuilding too.
+            with Session(engine) as session, session.begin():
+                session.add(PipelineRun())
+        ask_jobs[job_id] = {"status": "done", "answer": answer, "tools": tools}
+    except Exception:
+        log.exception("Agent failed")
+        ask_jobs[job_id] = {
+            "status": "failed",
+            "detail": "The assistant could not answer. Try again.",
+        }
+    finally:
+        chat_lock.release()
+
+
+@app.post("/agent/ask", status_code=202)
+def agent_ask(req: AskRequest):
+    """Starts an answer and returns a job id at once. Ask GET /agent/ask/{id} until it is done.
+
+    A long answer on a CPU-only PC takes minutes, and a single request that long is dropped
+    by the proxy in front of the API. Polling keeps every request short.
+    """
+    if not chat_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="Shelfmate is answering another question. Try again in a minute.",
+        )
+    job_id = uuid.uuid4().hex
+    ask_jobs[job_id] = {"status": "running"}
+    threading.Thread(target=run_ask, args=(job_id, req.message), daemon=True).start()
+    return {"job": job_id}
+
+
+@app.get("/agent/ask/{job_id}")
+def agent_ask_result(job_id: str):
+    """The answer once it is ready. Until then the status is "running"."""
+    job = ask_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such question")
+    if job["status"] != "running":
+        ask_jobs.pop(job_id, None)  # the answer is handed over once
+    return job
 
 
 @app.post("/shelf/{book_id}/finish")
@@ -263,6 +389,26 @@ def pipeline_busy() -> str | None:
     return "summaries" if states else None
 
 
+def split_genres(text: str | None) -> list[str]:
+    """The genres of one book, from the comma-separated text saved with it."""
+    return [g.strip().lower() for g in (text or "").split(",") if g.strip()]
+
+
+def common_genres(books: list[dict], top: int = 12) -> list[str]:
+    """The genres found in these books, the most common first."""
+    counts = Counter(g for b in books for g in set(split_genres(b["genres"])))
+    return [g for g, _ in sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:top]]
+
+
+def fill_months(counts: dict[str, int], today: date, n: int = 12) -> list[dict]:
+    """The last n months, oldest first, with 0 for a month with no finished books."""
+    months, y, m = [], today.year, today.month
+    for _ in range(n):
+        months.append(f"{y}-{m:02d}")
+        y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+    return [{"month": k, "count": counts.get(k, 0)} for k in reversed(months)]
+
+
 def page_lanes(books: list[dict], offset: int, limit: int, lane: str | None):
     """Splits ranked books into their lanes and cuts one page out of each.
 
@@ -286,11 +432,13 @@ def list_recommendations(
     offset: int = Query(0, ge=0),
     limit: int = Query(5, ge=1, le=20),
     lane: Literal["continue", "new"] | None = None,
+    genre: str | None = Query(None, max_length=60),
 ):
     """Both lanes from the last pipeline run, with summaries, reasons and store links.
 
     Each lane returns one page of `limit` books starting at `offset`. Ask for the next
-    page with offset=5, and `total` says when a lane has no more.
+    page with offset=5, and `total` says when a lane has no more. genre keeps only the
+    books of that genre, and genres lists the choices. Books marked "not interested" are left out.
     """
     with Session(engine) as session:
         books = [
@@ -305,22 +453,57 @@ def list_recommendations(
                     Book.summary,
                     Book.summary_source,
                     Book.cover_url,
+                    Book.genres,
                 )
                 .join(Book, Book.id == Recommendation.book_id)
+                .where(Recommendation.book_id.not_in(select(DismissedBook.book_id)))
+                # A book you just put on a shelf disappears at once, before the rebuild.
+                .where(Recommendation.book_id.not_in(select(ShelfEntry.book_id)))
                 .order_by(Recommendation.rank)
             ).mappings()
         ]
+    genres = common_genres(books)
+    if genre:
+        books = [b for b in books if genre.lower() in split_genres(b["genres"])]
     page, total = page_lanes(books, offset, limit, lane)
     # Store links are looked up for this page only, so a page takes about as long as one search.
     shown = [b for items in page.values() for b in items]
+    # The next page is checked in the background, so Show more opens at once.
+    ahead, _ = page_lanes(books, offset + limit, limit, lane)
+    upcoming = [(b["title"], b["author"]) for items in ahead.values() for b in items]
+    if upcoming:
+        background.add_task(stocked_links, upcoming, NEW_STORES)
     shops = stocked_links([(b["title"], b["author"]) for b in shown], NEW_STORES)
     for b, links in zip(shown, shops):
         if b["cover_url"] is None:
             background.add_task(ensure_cover, b["book_id"])
         b["shops"] = links
-        del b["lane"]
+        del b["lane"], b["genres"]
     # busy tells the website to look again: new picks coming, or summaries being written.
-    return {**page, "total": total, "busy": pipeline_busy()}
+    return {**page, "total": total, "genres": genres, "busy": pipeline_busy()}
+
+
+@app.post("/recommendations/{book_id}/dismiss")
+def dismiss_book(book_id: int):
+    """Marks a book "not interested": it is hidden now and never recommended again."""
+    with Session(engine) as session, session.begin():
+        if session.get(Book, book_id) is None:
+            raise HTTPException(status_code=404, detail=f"No book with id {book_id}")
+        if session.get(DismissedBook, book_id) is None:
+            session.add(DismissedBook(book_id=book_id))
+    log.info("Book dismissed", extra={"book_id": book_id})
+    return {"status": "dismissed", "book_id": book_id}
+
+
+@app.delete("/recommendations/{book_id}/dismiss")
+def undo_dismiss(book_id: int):
+    """Takes the book off the not-interested list, so it can show up again."""
+    with Session(engine) as session, session.begin():
+        entry = session.get(DismissedBook, book_id)
+        if entry is not None:
+            session.delete(entry)
+    log.info("Book restored", extra={"book_id": book_id})
+    return {"status": "restored", "book_id": book_id}
 
 
 @app.get("/search")
@@ -360,6 +543,14 @@ def stats():
             ).all()
         )
         catalogue = session.scalar(select(func.count()).select_from(Book))
+        month = func.to_char(ShelfEntry.finished_at, "YYYY-MM")
+        by_month = dict(
+            session.execute(
+                select(month, func.count())
+                .where(ShelfEntry.shelf == "read", ShelfEntry.finished_at.is_not(None))
+                .group_by(month)
+            ).all()
+        )
         recent = [
             dict(row)
             for row in session.execute(
@@ -391,4 +582,5 @@ def stats():
         "ratings": ratings,
         "catalogue": catalogue,
         "recent": recent,
+        "by_month": fill_months(by_month, date.today()),
     }

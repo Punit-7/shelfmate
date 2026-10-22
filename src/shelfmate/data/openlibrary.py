@@ -61,6 +61,24 @@ def search_books(query: str, limit: int = 10) -> list[dict]:
     ]
 
 
+def works_by_author(author: str, limit: int = 10) -> list[dict]:
+    """An author's works from Open Library, most-edited first, for authors the catalogue lacks."""
+    params = {
+        "author": author,
+        "sort": "editions",
+        "limit": limit,
+        "fields": "title,author_name,first_publish_year",
+    }
+    return [
+        {
+            "title": d["title"],
+            "author": ", ".join(d.get("author_name", [])) or author,
+            "year": d.get("first_publish_year"),
+        }
+        for d in _get("/search.json", params)["docs"]
+    ]
+
+
 def new_books_by(author: str, since_year: int) -> list[dict]:
     """Works by an author first published in or after since_year, newest first."""
     params = {
