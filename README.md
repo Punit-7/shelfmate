@@ -4,12 +4,16 @@ Shelfmate recommends your next book after you finish one, explains why, and link
 
 ## Demo
 
+**Live demo (read-only, sample data):** <!-- TODO: paste the Vercel link here -->
+
 <!-- TODO: record a GIF of finishing a book and getting recommendations, save as docs/demo.gif, then use ![Demo](docs/demo.gif) -->
+
+The hosted site runs in demo mode (`NEXT_PUBLIC_DEMO=1`): it serves a small sample, because the full stack (Postgres, SearXNG, torch, Ollama) is not hosted. To deploy it: import the repo in Vercel, set Root Directory to `site`, add `NEXT_PUBLIC_DEMO=1`, deploy. The full app runs locally, see below.
 
 ## Architecture
 
 ```
-Streamlit website --> FastAPI --> Postgres + pgvector
+Next.js website --> FastAPI --> Postgres + pgvector
                          |  \--> LangGraph agent --> SearXNG (store search), Ollama (LLM)
 Weekly worker ----------/
 ```

@@ -13,3 +13,4 @@ searxng/settings.yml
 notebooks/*.html
 .ipynb_checkpoints/
 notebooks/*.html
+graphify-out/
