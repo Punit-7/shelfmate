@@ -2,6 +2,33 @@
 // so it can run on Vercel without the database, the model or Ollama. Reads only.
 export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
 
+// Open Library cover ids, looked up by title. Covers load from Open Library in the browser.
+const COVER_IDS: Record<string, number> = {
+  "The Two Towers": 14627564,
+  "A Clash of Kings": 8231751,
+  "The Subtle Knife": 12614549,
+  "Catching Fire": 12646539,
+  "The Dragon Reborn": 603239,
+  "Project Hail Mary": 11200092,
+  "The Name of the Wind": 11480483,
+  Dune: 11481354,
+  "The Hitchhiker's Guide to the Galaxy": 12986869,
+  "Mistborn: The Final Empire": 11329782,
+  "Station Eleven": 7369961,
+  "The Fellowship of the Ring": 14627060,
+  "A Game of Thrones": 9269962,
+  Neuromancer: 283860,
+  "The Left Hand of Darkness": 10618463,
+  Piranesi: 10226290,
+  "The Hobbit": 14627509,
+  "The Martian": 11447888,
+  "The Hunger Games": 12646537,
+  "Harry Potter and the Philosopher's Stone": 15155833,
+  "1984": 9267242,
+};
+
+const cover = (title: string) => (COVER_IDS[title] ? `https://covers.openlibrary.org/b/id/${COVER_IDS[title]}-M.jpg` : null);
+
 const shops = (t: string) => {
   const q = encodeURIComponent(t);
   return [
@@ -12,7 +39,7 @@ const shops = (t: string) => {
 };
 
 const rec = (id: number, title: string, author: string, genre: string, because: string, summary: string) => ({
-  book_id: id, title, author, cover_url: null, because, summary, shops: shops(title), genre,
+  book_id: id, title, author, cover_url: cover(title), because, summary, shops: shops(title), genre,
 });
 
 const CONTINUE = [
@@ -33,7 +60,7 @@ const NEW = [
 ];
 
 const book = (book_id: number, title: string, author: string, rating = 0, chapter = 0, total_chapters: number | null = null) => ({
-  book_id, title, author, cover_url: null, rating, chapter, total_chapters,
+  book_id, title, author, cover_url: cover(title), rating, chapter, total_chapters,
 });
 
 const SHELVES: Record<string, ReturnType<typeof book>[]> = {
@@ -56,9 +83,9 @@ const STATS = {
   ratings: { "4": 2, "5": 3 },
   catalogue: 120000,
   recent: [
-    { book_id: 31, title: "The Hobbit", cover_url: null, rating: 5, community: 4.28 },
-    { book_id: 32, title: "The Martian", cover_url: null, rating: 5, community: 4.4 },
-    { book_id: 33, title: "The Hunger Games", cover_url: null, rating: 4, community: 4.33 },
+    { book_id: 31, title: "The Hobbit", cover_url: cover("The Hobbit"), rating: 5, community: 4.28 },
+    { book_id: 32, title: "The Martian", cover_url: cover("The Martian"), rating: 5, community: 4.4 },
+    { book_id: 33, title: "The Hunger Games", cover_url: cover("The Hunger Games"), rating: 4, community: 4.33 },
   ],
   by_month: Array.from({ length: 12 }, (_, i) => {
     const d = new Date();
