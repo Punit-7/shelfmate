@@ -1,3 +1,5 @@
+import { DEMO, demoResponse } from "@/lib/demo";
+
 export type Book = {
   book_id: number;
   title: string;
@@ -33,13 +35,14 @@ export const PAGE = 5; // books per lane per page, the same as the API's default
 const SERVER_API = process.env.API_URL ?? "http://127.0.0.1:8000";
 
 export async function getJson<T>(path: string): Promise<T> {
+  if (DEMO) return demoResponse("GET", path) as T;
   const res = await fetch(`${SERVER_API}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status} for ${path}`);
   return res.json();
 }
 
 export async function send(method: string, path: string, body?: unknown) {
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${DEMO ? "/demo-api" : "/api"}${path}`, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
