@@ -4,9 +4,11 @@ Shelfmate recommends your next book after you finish one, explains why, and link
 
 ## Demo
 
-**Live demo (read-only, sample data):** <!-- TODO: paste the Vercel link here -->
+**Live demo (read-only, sample data):** https://shelfmate-9n5kpqosk-punit-84e9.vercel.app/
 
-<!-- TODO: record a GIF of finishing a book and getting recommendations, save as docs/demo.gif, then use ![Demo](docs/demo.gif) -->
+![Demo](docs/demo.gif)
+
+The GIF starts with a title card on how it works (rate a book, score it two ways, split into two lanes, find store links, show 5 picks). It then tours the sample data: both lanes, genre filter, shelves and dashboard.
 
 The hosted site runs in demo mode (`NEXT_PUBLIC_DEMO=1`): it serves a small sample, because the full stack (Postgres, SearXNG, torch, Ollama) is not hosted. To deploy it: import the repo in Vercel, set Root Directory to `site`, add `NEXT_PUBLIC_DEMO=1`, deploy. The full app runs locally, see below.
 
